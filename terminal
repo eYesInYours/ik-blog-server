@@ -1,0 +1,28 @@
+mkdir personal-website-backend
+cd personal-website-backend
+npm init -y
+npm install express mongoose bcryptjs jsonwebtoken dotenv cors multer nodemon chalk@4
+# 检查 MongoDB 是否正确安装
+mongosh
+
+# 如果仍然报错，可以使用完整路径
+"C:\Program Files\MongoDB\Server\6.0\bin\mongosh.exe"
+
+npm install
+node server.js
+# 在 Windows PowerShell 中运行（以管理员身份）
+net start MongoDB
+
+npm start
+mkdir uploads
+touch uploads/.gitkeep  # 在 Unix/Linux 系统上
+# 或者在 Windows 上
+echo. > uploads\.gitkeep
+
+curl -X POST http://localhost:5000/api/auth/register \
+-H "Content-Type: application/json" \
+-d '{
+    "username": "testuser",
+    "email": "test@example.com",
+    "password": "password123"
+}'
