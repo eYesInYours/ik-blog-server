@@ -22,11 +22,18 @@ const app = express();
 // 连接数据库
 connectDB();
 
-// 最简单的 CORS 配置
-app.use(cors({
-    origin: '*',  // 允许所有域名访问
-    credentials: true
-}));
+// CORS 配置
+const corsOptions = {
+    origin: process.env.NODE_ENV === 'development' 
+        ? 'http://localhost:3010'
+        : 'http://159.75.125.36:3010',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    exposedHeaders: ['Content-Disposition']
+};
+
+app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
