@@ -9,19 +9,51 @@ exports.register = async (req, res) => {
     try {
         const { username, email, password } = req.body;
         
-        // 检查用户是否已存在
-        const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+        // 只检查邮箱是否已存在
+        const existingUser = await User.findOne({ email });
         if (existingUser) {
-            return res.status(CLIENT_ERROR.CONFLICT).json({ 
-                message: '用户名或邮箱已存在' 
+            return res.status(CLIENT_ERROR.CONFLICT).json({
+                message: '该邮箱已被注册'
             });
         }
 
-        const user = new User({ username, email, password });
+        // 检查是否存在作者
+        const authorExists = await User.findOne({ isAuthor: true });
+
+        // 如果用户名重复，自动添加随机后缀
+        let finalUsername = username;
+        let userWithSameUsername = await User.findOne({ username });
+        if (userWithSameUsername) {
+            finalUsername = `${username}_${Math.random().toString(36).slice(2, 7)}`;
+        }
+
+        const user = new User({
+            username: finalUsername,
+            email,
+            password,
+            isAuthor: !authorExists  // 如果还没有作者，则设置为作者
+        });
+
         await user.save();
 
-        res.status(SUCCESS.CREATED).json({ 
-            message: '注册成功' 
+        // 生成 JWT token
+        const token = jwt.sign(
+            { userId: user._id },
+            process.env.JWT_SECRET,
+            { expiresIn: TOKEN_EXPIRES_IN }
+        );
+
+        // 返回注册成功信息，包含 token 和用户信息
+        res.status(SUCCESS.CREATED).json({
+            message: '注册成功',
+            token,
+            user: {
+                id: user._id,
+                username: user.username,
+                email: user.email,
+                avatar: user.avatar,
+                isAuthor: user.isAuthor
+            }
         });
     } catch (error) {
         console.error(chalk.red('注册错误:'), error);
@@ -62,7 +94,8 @@ exports.login = async (req, res) => {
                 id: user._id,
                 username: user.username,
                 email: user.email,
-                avatar: user.avatar
+                avatar: user.avatar,
+                isAuthor: user.isAuthor
             }
         });
     } catch (error) {

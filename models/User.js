@@ -15,6 +15,10 @@ const userSchema = new mongoose.Schema({
         trim: true,
         lowercase: true
     },
+    isAuthor: {
+        type: Boolean,
+        default: false
+    },
     password: {
         type: String,
         required: true

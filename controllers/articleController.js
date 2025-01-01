@@ -12,6 +12,13 @@ exports.createArticle = async (req, res) => {
         // 获取作者信息包括头像
         const author = await User.findById(req.user.userId);
 
+        // 检查是否是作者
+        if (!author.isAuthor) {
+            return res.status(CLIENT_ERROR.FORBIDDEN).json({
+                message: '只有博主才能发布文章'
+            });
+        }
+
         const article = new Article({
             title,
             content,
