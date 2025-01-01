@@ -3,7 +3,15 @@ const chalk = require('chalk');
 
 const connectDB = async () => {
     try {
-        await mongoose.connect(process.env.MONGODB_URI, {
+        // 根据环境选择数据库 URI
+        const MONGODB_URI = process.env.NODE_ENV === 'production' 
+            ? process.env.MONGODB_URI_PROD 
+            : process.env.MONGODB_URI_DEV;
+
+        console.log(chalk.blue(`当前环境: ${process.env.NODE_ENV}`));
+        console.log(chalk.blue(`连接数据库: ${MONGODB_URI}`));
+
+        await mongoose.connect(MONGODB_URI, {
             useNewUrlParser: true,
             useUnifiedTopology: true
         });

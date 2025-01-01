@@ -22,8 +22,41 @@ const app = express();
 // 连接数据库
 connectDB();
 
-// 中间件
-app.use(cors());
+// CORS 配置
+const corsOptions = {
+    origin: function (origin, callback) {
+        // 允许的域名列表
+        const allowedOrigins = [
+            process.env.FRONTEND_URL_DEV,
+            process.env.FRONTEND_URL_PROD
+        ];
+        
+        // 允许没有 origin 的请求（比如移动端 APP）
+        if (!origin) {
+            return callback(null, true);
+        }
+        
+        // 检查请求的 origin 是否包含允许的域名
+        if (allowedOrigins.some(allowed => origin.includes(allowed))) {
+            callback(null, true);
+        } else {
+            console.log(chalk.yellow(`不允许的域名请求: ${origin}`));
+            callback(new Error('不允许的域名'));
+        }
+    },
+    credentials: true,  // 允许携带认证信息（cookies）
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // 允许的 HTTP 方法
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With'
+    ],
+    exposedHeaders: ['Content-Disposition']  // 允许前端访问的响应头
+};
+
+// 应用 CORS 配置
+app.use(cors(corsOptions));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -45,10 +78,19 @@ app.use('/api/banners', require('./routes/banners'));
 // 错误处理中间件
 app.use((err, req, res, next) => {
     console.error(chalk.red('全局错误处理:'), err);
-    if (err instanceof multer.MulterError) {
-        return res.status(CLIENT_ERROR.BAD_REQUEST).json({ message: '文件上传错误: ' + err.message });
+    if (err.message === '不允许的域名') {
+        return res.status(CLIENT_ERROR.FORBIDDEN).json({ 
+            message: '不允许的跨域请求' 
+        });
     }
-    res.status(SERVER_ERROR.INTERNAL_ERROR).json({ message: '服务器内部错误' });
+    if (err instanceof multer.MulterError) {
+        return res.status(CLIENT_ERROR.BAD_REQUEST).json({ 
+            message: '文件上传错误: ' + err.message 
+        });
+    }
+    res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
+        message: '服务器内部错误' 
+    });
 });
 
 const PORT = process.env.PORT || 5000;
