@@ -22,11 +22,32 @@ const app = express();
 // 连接数据库
 connectDB();
 
-// 最简单的跨域配置
+// API 基础路径
+const API_BASE = process.env.NODE_ENV === 'development' 
+    ? 'http://localhost:5000/api'
+    : 'http://159.75.125.36:5000/api';
+
+// 跨域配置
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    // 允许特定域名访问
+    const allowedOrigins = [
+        'http://localhost:3010',
+        'http://159.75.125.36:3010'
+    ];
+    const origin = req.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
+
+    // 允许携带认证信息
+    res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', '*');
-    res.header('Access-Control-Allow-Headers', '*');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+
+    // 处理 OPTIONS 请求
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
     next();
 });
 
@@ -39,14 +60,18 @@ app.use(visitLogger);
 // 静态文件服务
 app.use('/uploads', express.static('uploads'));
 
-// 路由
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/users', require('./routes/users'));
-app.use('/api/articles', require('./routes/articles'));
-app.use('/api/comments', require('./routes/comments'));
-app.use('/api/files', require('./routes/files'));
-app.use('/api/statistics', require('./routes/statistics'));
-app.use('/api/banners', require('./routes/banners'));
+// API 路由
+const apiRouter = express.Router();
+apiRouter.use('/auth', require('./routes/auth'));
+apiRouter.use('/users', require('./routes/users'));
+apiRouter.use('/articles', require('./routes/articles'));
+apiRouter.use('/comments', require('./routes/comments'));
+apiRouter.use('/files', require('./routes/files'));
+apiRouter.use('/statistics', require('./routes/statistics'));
+apiRouter.use('/banners', require('./routes/banners'));
+
+// 挂载 API 路由到 /api 路径
+app.use('/api', apiRouter);
 
 // 错误处理中间件
 app.use((err, req, res, next) => {
