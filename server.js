@@ -1,4 +1,12 @@
 require('dotenv').config();
+
+// 打印环境变量用于调试
+console.log('当前环境:', process.env.NODE_ENV);
+console.log('MongoDB URI:', process.env.NODE_ENV === 'production' 
+    ? process.env.MONGODB_URI_PROD 
+    : process.env.MONGODB_URI_DEV
+);
+
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
