@@ -22,18 +22,13 @@ const app = express();
 // 连接数据库
 connectDB();
 
-// CORS 配置
-const corsOptions = {
-    origin: process.env.NODE_ENV === 'development' 
-        ? 'http://localhost:3010'
-        : 'http://159.75.125.36:3010',
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    exposedHeaders: ['Content-Disposition']
-};
-
-app.use(cors(corsOptions));
+// 最简单的跨域配置
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', '*');
+    res.header('Access-Control-Allow-Headers', '*');
+    next();
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
