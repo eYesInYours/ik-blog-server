@@ -22,40 +22,11 @@ const app = express();
 // 连接数据库
 connectDB();
 
-// CORS 配置
-const corsOptions = {
-    origin: function (origin, callback) {
-        // 允许的域名列表
-        const allowedOrigins = [
-            process.env.FRONTEND_URL_DEV,
-            process.env.FRONTEND_URL_PROD
-        ];
-        
-        // 允许没有 origin 的请求（比如移动端 APP）
-        if (!origin) {
-            return callback(null, true);
-        }
-        
-        // 检查请求的 origin 是否包含允许的域名
-        if (allowedOrigins.some(allowed => origin.includes(allowed))) {
-            callback(null, true);
-        } else {
-            console.log(chalk.yellow(`不允许的域名请求: ${origin}`));
-            callback(new Error('不允许的域名'));
-        }
-    },
-    credentials: true,  // 允许携带认证信息（cookies）
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // 允许的 HTTP 方法
-    allowedHeaders: [
-        'Content-Type',
-        'Authorization',
-        'X-Requested-With'
-    ],
-    exposedHeaders: ['Content-Disposition']  // 允许前端访问的响应头
-};
-
-// 应用 CORS 配置
-app.use(cors(corsOptions));
+// 最简单的 CORS 配置
+app.use(cors({
+    origin: '*',  // 允许所有域名访问
+    credentials: true
+}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
