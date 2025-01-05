@@ -16,6 +16,7 @@ const path = require('path');
 const multer = require('multer');
 const visitLogger = require('./middleware/visitLogger');
 const { SERVER_ERROR, CLIENT_ERROR } = require('./constants/httpStatus');
+const session = require('express-session');
 
 // 确保 uploads 目录存在
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -26,6 +27,14 @@ if (!fs.existsSync(uploadsDir)) {
 
 // 初始化 Express 应用
 const app = express();
+
+// session 中间件配置 - 放在其他中间件之前
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: process.env.NODE_ENV === 'production' }
+}));
 
 // 连接数据库
 connectDB();
@@ -77,6 +86,8 @@ apiRouter.use('/comments', require('./routes/comments'));
 apiRouter.use('/files', require('./routes/files'));
 apiRouter.use('/statistics', require('./routes/statistics'));
 apiRouter.use('/banners', require('./routes/banners'));
+apiRouter.use('/captcha', require('./routes/captcha'));
+apiRouter.use('/categories', require('./routes/categories'));
 
 // 挂载 API 路由到 /api 路径
 app.use('/api', apiRouter);

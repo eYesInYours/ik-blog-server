@@ -4,36 +4,35 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
     username: {
         type: String,
-        required: true,
-        unique: true,
+        required: [true, '用户名不能为空'],
         trim: true
     },
     email: {
         type: String,
-        required: true,
+        required: [true, '邮箱不能为空'],
         unique: true,
         trim: true,
         lowercase: true
     },
-    isAuthor: {
-        type: Boolean,
-        default: false
-    },
     password: {
         type: String,
-        required: true
+        required: [true, '密码不能为空'],
+        minlength: 6
     },
     avatar: {
         type: String,
-        default: '/uploads/default-avatar.png'  // 默认头像
+        default: ''
     },
-    createdAt: {
-        type: Date,
-        default: Date.now
+    roles: {
+        type: [String],
+        default: ['reader'],  // 默认为读者角色
+        enum: ['reader', 'writer']  // 限制角色类型
     }
+}, {
+    timestamps: true
 });
 
-// 密码加密中间件
+// 保存前加密密码
 userSchema.pre('save', async function(next) {
     if (!this.isModified('password')) return next();
     
@@ -46,9 +45,9 @@ userSchema.pre('save', async function(next) {
     }
 });
 
-// 验证密码的方法
+// 比较密码
 userSchema.methods.comparePassword = async function(candidatePassword) {
-    return await bcrypt.compare(candidatePassword, this.password);
+    return bcrypt.compare(candidatePassword, this.password);
 };
 
 module.exports = mongoose.model('User', userSchema); 

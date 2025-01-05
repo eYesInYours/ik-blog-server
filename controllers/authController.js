@@ -13,12 +13,13 @@ exports.register = async (req, res) => {
         const existingUser = await User.findOne({ email });
         if (existingUser) {
             return res.status(CLIENT_ERROR.CONFLICT).json({
+                code: CLIENT_ERROR.CONFLICT,
                 message: '该邮箱已被注册'
             });
         }
 
         // 检查是否存在作者
-        const authorExists = await User.findOne({ isAuthor: true });
+        const writerExists = await User.exists({ roles: 'writer' });
 
         // 如果用户名重复，自动添加随机后缀
         let finalUsername = username;
@@ -31,7 +32,7 @@ exports.register = async (req, res) => {
             username: finalUsername,
             email,
             password,
-            isAuthor: !authorExists  // 如果还没有作者，则设置为作者
+            roles: writerExists ? ['reader'] : ['writer']  // 如果还没有作者，则设置为作者角色
         });
 
         await user.save();
@@ -43,21 +44,24 @@ exports.register = async (req, res) => {
             { expiresIn: TOKEN_EXPIRES_IN }
         );
 
-        // 返回注册成功信息，包含 token 和用户信息
         res.status(SUCCESS.CREATED).json({
+            code: SUCCESS.CREATED,
             message: '注册成功',
-            token,
-            user: {
-                id: user._id,
-                username: user.username,
-                email: user.email,
-                avatar: user.avatar,
-                isAuthor: user.isAuthor
+            data: {
+                token,
+                user: {
+                    id: user._id,
+                    username: user.username,
+                    email: user.email,
+                    avatar: user.avatar,
+                    roles: user.roles
+                }
             }
         });
     } catch (error) {
         console.error(chalk.red('注册错误:'), error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
+            code: SERVER_ERROR.INTERNAL_ERROR,
             message: '注册失败' 
         });
     }
@@ -71,6 +75,7 @@ exports.login = async (req, res) => {
         const user = await User.findOne({ email });
         if (!user) {
             return res.status(CLIENT_ERROR.UNAUTHORIZED).json({ 
+                code: CLIENT_ERROR.UNAUTHORIZED,
                 message: '邮箱或密码错误' 
             });
         }
@@ -78,6 +83,7 @@ exports.login = async (req, res) => {
         const isMatch = await user.comparePassword(password);
         if (!isMatch) {
             return res.status(CLIENT_ERROR.UNAUTHORIZED).json({ 
+                code: CLIENT_ERROR.UNAUTHORIZED,
                 message: '邮箱或密码错误' 
             });
         }
@@ -89,18 +95,22 @@ exports.login = async (req, res) => {
         );
 
         res.json({
-            token,
-            user: {
-                id: user._id,
-                username: user.username,
-                email: user.email,
-                avatar: user.avatar,
-                isAuthor: user.isAuthor
+            code: SUCCESS.OK,
+            data: {
+                token,
+                user: {
+                    id: user._id,
+                    username: user.username,
+                    email: user.email,
+                    avatar: user.avatar,
+                    roles: user.roles
+                }
             }
         });
     } catch (error) {
         console.error(chalk.red('登录错误:'), error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
+            code: SERVER_ERROR.INTERNAL_ERROR,
             message: '登录失败' 
         });
     }
@@ -112,13 +122,18 @@ exports.verifyToken = async (req, res) => {
         const user = await User.findById(req.user.userId).select('-password');
         if (!user) {
             return res.status(CLIENT_ERROR.NOT_FOUND).json({ 
+                code: CLIENT_ERROR.NOT_FOUND,  // 404
                 message: '用户不存在' 
             });
         }
-        res.json({ user });
+        res.json({
+            code: SUCCESS.OK,  // 200
+            data: { user }
+        });
     } catch (error) {
         console.error(chalk.red('令牌验证错误:'), error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
+            code: SERVER_ERROR.INTERNAL_ERROR,  // 500
             message: '令牌验证失败' 
         });
     }
@@ -132,10 +147,14 @@ exports.refreshToken = async (req, res) => {
             process.env.JWT_SECRET,
             { expiresIn: '24h' }
         );
-        res.json({ token: newToken });
+        res.json({
+            code: SUCCESS.OK,  // 200
+            data: { token: newToken }
+        });
     } catch (error) {
         console.error(chalk.red('令牌刷新错误:'), error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
+            code: SERVER_ERROR.INTERNAL_ERROR,  // 500
             message: '令牌刷新失败' 
         });
     }
@@ -144,13 +163,14 @@ exports.refreshToken = async (req, res) => {
 // 退出登录
 exports.logout = async (req, res) => {
     try {
-        // 这里可以添加令牌黑名单等逻辑
         res.status(SUCCESS.OK).json({ 
+            code: SUCCESS.OK,  // 200
             message: '退出成功' 
         });
     } catch (error) {
         console.error(chalk.red('退出登录错误:'), error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
+            code: SERVER_ERROR.INTERNAL_ERROR,  // 500
             message: '退出失败' 
         });
     }

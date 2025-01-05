@@ -4,6 +4,11 @@ const path = require('path');
 const chalk = require('chalk');
 const { SUCCESS, CLIENT_ERROR, SERVER_ERROR } = require('../constants/httpStatus');
 
+// 从环境变量获取 API 基础路径
+const API_BASE = process.env.NODE_ENV === 'development' 
+    ? process.env.API_BASE_DEV 
+    : process.env.API_BASE_PROD;
+
 // 上传文件
 exports.uploadFile = async (req, res) => {
     try {
@@ -22,7 +27,7 @@ exports.uploadFile = async (req, res) => {
             mimetype: req.file.mimetype,
             path: req.file.path,
             size: req.file.size,
-            uploadedBy: req.user.userId,
+            uploadedBy: req.user._id,
             article: req.body.articleId || null
         });
 
@@ -31,13 +36,16 @@ exports.uploadFile = async (req, res) => {
         console.log(chalk.green('文件上传成功:', file.originalname));
         res.status(SUCCESS.CREATED).json({
             message: '文件上传成功',
-            file: {
-                id: file._id,
-                filename: file.filename,
-                originalname: file.originalname,
-                size: file.size,
-                url: `/uploads/${file.filename}`
-            }
+            data: {
+                file: {
+                    id: file._id,
+                    filename: file.filename,
+                    originalname: file.originalname,
+                    size: file.size,
+                    url: `${API_BASE}/uploads/${file.filename}`
+                }
+            },
+            code: SUCCESS.CREATED
         });
     } catch (error) {
         console.error(chalk.red('文件上传错误:'), error);
@@ -101,7 +109,7 @@ exports.deleteFile = async (req, res) => {
         }
 
         // 检查权限
-        if (file.uploadedBy.toString() !== req.user.userId) {
+        if (file.uploadedBy.toString() !== req.user._id.toString()) {
             return res.status(403).json({ message: '没有权限删除此文件' });
         }
 

@@ -2,42 +2,53 @@ const Article = require('../models/Article');
 const User = require('../models/User');
 const chalk = require('chalk');
 const Comment = require('../models/Comment');
+const { SUCCESS, CLIENT_ERROR, SERVER_ERROR } = require('../constants/httpStatus');
+const { success, error } = require('../utils/responseHandler');
 
 // 创建文章
 exports.createArticle = async (req, res) => {
     try {
         console.log(chalk.blue('创建文章请求数据:'), req.body);
-        const { title, content, tags, cover } = req.body;
+        console.log(chalk.blue('当前用户信息:'), req.user);
+
+        const { title, content, tags, category, status, allowComment, coverImage, summary } = req.body;
 
         // 获取作者信息包括头像
-        const author = await User.findById(req.user.userId);
+        const author = await User.findById(req.user._id);
+        console.log(chalk.blue('查询到的作者信息:'), author);
 
-        // 检查是否是作者
-        if (!author.isAuthor) {
-            return res.status(CLIENT_ERROR.FORBIDDEN).json({
-                message: '只有博主才能发布文章'
-            });
+        if (!author) {
+            console.log(chalk.red('作者信息不存在'));
+            return res.status(404).json(
+                error(CLIENT_ERROR.NOT_FOUND, '作者信息不存在')
+            );
         }
 
         const article = new Article({
             title,
             content,
             tags,
-            cover,
-            status: 'active',
-            author: req.user.userId,
-            authorAvatar: author.avatar
+            category,
+            status: status || 'published',
+            allowComment: allowComment ?? true,
+            cover: coverImage,
+            summary,
+            author: req.user._id,
+            authorAvatar: author.avatar || ''
         });
 
         await article.save();
         console.log(chalk.green('文章创建成功:', article.title));
-        res.status(201).json({
-            message: '文章创建成功',
-            article
-        });
-    } catch (error) {
-        console.error(chalk.red('创建文章错误:'), error);
-        res.status(500).json({ message: '创建文章失败' });
+
+        res.status(201).json(
+            success(article, '文章创建成功')
+        );
+    } catch (err) {
+        console.error(chalk.red('创建文章错误:'), err);
+        console.error(chalk.red('错误堆栈:'), err.stack);
+        res.status(500).json(
+            error(SERVER_ERROR.INTERNAL_ERROR, '创建文章失败')
+        );
     }
 };
 
@@ -46,25 +57,31 @@ exports.getArticles = async (req, res) => {
     try {
         console.log(chalk.blue('获取文章列表请求:', req.query));
         const { page = 1, limit = 10 } = req.query;
-        const articles = await Article.find({
-            status: 'active'
-        })
+
+        const articles = await Article.find({ status: 'published' })
             .populate('author', 'username avatar')
+            .populate('category', 'name')
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
 
-        const total = await Article.countDocuments();
+        const total = await Article.countDocuments({ status: 'published' });
 
         console.log(chalk.green('获取文章列表成功, 总数:', total));
-        res.json({
+        res.json(success({
             articles,
-            totalPages: Math.ceil(total / limit),
-            currentPage: page
-        });
-    } catch (error) {
-        console.error(chalk.red('获取文章列表错误:'), error);
-        res.status(500).json({ message: '获取文章列表失败' });
+            pagination: {
+                total,
+                totalPages: Math.ceil(total / limit),
+                currentPage: parseInt(page),
+                limit: parseInt(limit)
+            }
+        }));
+    } catch (err) {
+        console.error(chalk.red('获取文章列表错误:'), err);
+        res.status(500).json(
+            error(SERVER_ERROR.INTERNAL_ERROR, '获取文章列表失败')
+        );
     }
 };
 
@@ -76,18 +93,22 @@ exports.getArticle = async (req, res) => {
         // 验证文章ID格式
         if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
             console.log(chalk.yellow('获取文章失败: 无效的文章ID格式'));
-            return res.status(400).json({ message: '无效的文章ID格式' });
+            return res.status(400).json(
+                error(CLIENT_ERROR.BAD_REQUEST, '无效的文章ID格式')
+            );
         }
 
         // 获取文章基本信息
         const article = await Article.findById(req.params.id)
             .populate('author', 'username avatar');
-        
+
         if (!article) {
             console.log(chalk.yellow('获取文章失败: 文章不存在'));
-            return res.status(404).json({ message: '文章不存在' });
+            return res.status(404).json(
+                error(CLIENT_ERROR.NOT_FOUND, '文章不存在')
+            );
         }
-        
+
         // 获取文章的所有评论
         const comments = await Comment.find({ article: req.params.id })
             .populate('author', 'username avatar')
@@ -101,7 +122,6 @@ exports.getArticle = async (req, res) => {
         const commentMap = new Map();
         const rootComments = [];
 
-        // 第一次遍历：创建所有评论的映射
         comments.forEach(comment => {
             commentMap.set(comment._id.toString(), {
                 ...comment.toObject(),
@@ -109,14 +129,11 @@ exports.getArticle = async (req, res) => {
             });
         });
 
-        // 第二次遍历：构建评论树
         comments.forEach(comment => {
             const commentData = commentMap.get(comment._id.toString());
             if (comment.parentComment) {
-                // 这是一个回复
                 const parentComment = commentMap.get(comment.parentComment._id.toString());
                 if (parentComment) {
-                    // 添加到父评论的回复列表中
                     parentComment.replies.push({
                         ...commentData,
                         replyTo: {
@@ -127,7 +144,6 @@ exports.getArticle = async (req, res) => {
                     });
                 }
             } else {
-                // 这是一个根评论
                 rootComments.push(commentData);
             }
         });
@@ -137,10 +153,12 @@ exports.getArticle = async (req, res) => {
         articleData.comments = rootComments;
 
         console.log(chalk.green('获取文章成功:', article.title));
-        res.json(articleData);
-    } catch (error) {
-        console.error(chalk.red('获取文章错误:'), error);
-        res.status(500).json({ message: '获取文章失败' });
+        res.json(success(articleData));
+    } catch (err) {
+        console.error(chalk.red('获取文章错误:'), err);
+        res.status(500).json(
+            error(SERVER_ERROR.INTERNAL_ERROR, '获取文章失败')
+        );
     }
 };
 
@@ -155,8 +173,8 @@ exports.updateArticle = async (req, res) => {
         }
 
         // 确保只有作者可以更新文章
-        if (article.author.toString() !== req.user.userId) {
-            return res.status(403).json({ message: '没有权限修改此文章' });
+        if (article.author.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: '只有作者可以更新文章' });
         }
 
         article.title = title || article.title;
@@ -167,8 +185,9 @@ exports.updateArticle = async (req, res) => {
 
         await article.save();
         res.json({
-            message: '文章更新成功',
-            article
+            code: SUCCESS.OK,
+            data: article,
+            message: '文章更新成功'
         });
     } catch (error) {
         console.error(chalk.red('更新文章错误:'), error);
@@ -186,12 +205,16 @@ exports.deleteArticle = async (req, res) => {
         }
 
         // 确保只有作者可以删除文章
-        if (article.author.toString() !== req.user.userId) {
-            return res.status(403).json({ message: '没有权限删除此文章' });
+        if (article.author.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: '只有作者可以删除文章' });
         }
 
         await article.deleteOne();
-        res.json({ message: '文章删除成功' });
+        res.json({ 
+            code: SUCCESS.OK,
+            data: null, 
+            message: '文章删除成功'
+         });
     } catch (error) {
         console.error('删除文章错误:', error);
         res.status(500).json({ message: '删除文章失败' });
@@ -201,10 +224,10 @@ exports.deleteArticle = async (req, res) => {
 // 获取所有文章（管理接口）
 exports.getAllArticlesAdmin = async (req, res) => {
     try {
-        const { 
-            page = 1, 
-            limit = 10, 
-            keyword = '', 
+        const {
+            page = 1,
+            limit = 10,
+            keyword = '',
             status,
             startDate,
             endDate,
@@ -212,7 +235,7 @@ exports.getAllArticlesAdmin = async (req, res) => {
             sortBy = 'createdAt',
             sortOrder = 'desc'
         } = req.query;
-        
+
         // 构建查询条件
         const query = {};
 
@@ -264,12 +287,16 @@ exports.getAllArticlesAdmin = async (req, res) => {
         const total = await Article.countDocuments(query);
 
         res.json({
-            articles,
-            pagination: {
-                total,
-                totalPages: Math.ceil(total / limit),
-                currentPage: parseInt(page),
-                limit: parseInt(limit)
+            code: SUCCESS.OK,
+            message: '获取文章列表成功',
+            data: {
+                articles,
+                pagination: {
+                    total,
+                    totalPages: Math.ceil(total / limit),
+                    currentPage: parseInt(page),
+                    limit: parseInt(limit)
+                }
             }
         });
     } catch (error) {
@@ -285,8 +312,8 @@ exports.updateArticleStatus = async (req, res) => {
         const { status } = req.body;
 
         if (!['active', 'disabled'].includes(status)) {
-            return res.status(CLIENT_ERROR.BAD_REQUEST).json({ 
-                message: '无效的状态值' 
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                message: '无效的状态值'
             });
         }
 
@@ -297,8 +324,8 @@ exports.updateArticleStatus = async (req, res) => {
         ).populate('author', 'username avatar');
 
         if (!article) {
-            return res.status(CLIENT_ERROR.NOT_FOUND).json({ 
-                message: '文章不存在' 
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                message: '文章不存在'
             });
         }
 
@@ -308,8 +335,8 @@ exports.updateArticleStatus = async (req, res) => {
         });
     } catch (error) {
         console.error(chalk.red('更新文章状态错误:'), error);
-        res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
-            message: '更新文章状态失败' 
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            message: '更新文章状态失败'
         });
     }
 };
@@ -320,21 +347,23 @@ exports.batchDeleteArticles = async (req, res) => {
         const { ids } = req.body;
 
         if (!Array.isArray(ids) || ids.length === 0) {
-            return res.status(CLIENT_ERROR.BAD_REQUEST).json({ 
-                message: '无效的文章ID列表' 
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                message: '无效的文章ID列表'
             });
         }
 
         const result = await Article.deleteMany({ _id: { $in: ids } });
 
         res.json({
+            code: SUCCESS.OK,
+            data: null,
             message: '文章批量删除成功',
             deletedCount: result.deletedCount
         });
     } catch (error) {
         console.error(chalk.red('批量删除文章错误:'), error);
-        res.status(SERVER_ERROR.INTERNAL_ERROR).json({ 
-            message: '批量删除文章失败' 
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            message: '批量删除文章失败'
         });
     }
 }; 

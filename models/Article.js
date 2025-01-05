@@ -10,14 +10,18 @@ const articleSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    category: {
+        type: String,
+        required: true
+    },
     cover: {
         type: String,
         default: null
     },
     status: {
         type: String,
-        enum: ['active', 'disabled'],
-        default: 'active'
+        enum: ['draft', 'published'],
+        default: 'published'
     },
     author: {
         type: mongoose.Schema.Types.ObjectId,

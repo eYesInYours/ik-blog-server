@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
-const chalk = require('chalk')
+const chalk = require('chalk');
+const User = require('../models/User');
 const { CLIENT_ERROR } = require('../constants/httpStatus');
 
 // 定义认证错误类型
@@ -10,7 +11,7 @@ const AUTH_ERRORS = {
     TOKEN_VERIFICATION_FAILED: 'TOKEN_VERIFICATION_FAILED'
 };
 
-const auth = (req, res, next) => {
+const auth = async (req, res, next) => {
     try {
         const authHeader = req.header('Authorization');
         
@@ -34,13 +35,22 @@ const auth = (req, res, next) => {
 
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            req.user = decoded;
-            console.log(chalk.green('认证成功, 用户ID:', decoded.userId));
+            
+            // 从数据库获取完整的用户信息
+            const user = await User.findById(decoded.userId).select('-password');
+            if (!user) {
+                return res.status(CLIENT_ERROR.UNAUTHORIZED).json({
+                    message: '用户不存在',
+                    error: AUTH_ERRORS.TOKEN_INVALID
+                });
+            }
+            
+            req.user = user;  // 存储完整的用户信息
+            console.log(chalk.green('认证成功, 用户:', user.username));
             next();
         } catch (jwtError) {
             console.log(chalk.yellow('JWT验证失败:', jwtError.message));
             
-            // 根据具体的JWT错误类型返回相应的错误信息
             if (jwtError.name === 'TokenExpiredError') {
                 return res.status(CLIENT_ERROR.UNAUTHORIZED).json({
                     message: '认证令牌已过期',
@@ -55,7 +65,6 @@ const auth = (req, res, next) => {
                 });
             }
             
-            // 其他JWT验证错误
             return res.status(CLIENT_ERROR.UNAUTHORIZED).json({
                 message: '令牌验证失败',
                 error: AUTH_ERRORS.TOKEN_VERIFICATION_FAILED

@@ -8,7 +8,7 @@ exports.createComment = async (req, res) => {
     try {
         console.log(chalk.blue('创建评论请求数据:'), req.body);
         const { content, articleId, parentCommentId } = req.body;
-        const author = await User.findById(req.user.userId);
+        const author = await User.findById(req.user._id);
 
         let rootCommentId = null;
         // 如果是回复评论，验证父评论是否存在
@@ -39,7 +39,7 @@ exports.createComment = async (req, res) => {
         const comment = new Comment({
             content,
             article: articleId,
-            author: req.user.userId,
+            author: req.user._id,
             authorAvatar: author.avatar,
             parentComment: rootCommentId || parentCommentId || null
         });
@@ -200,7 +200,7 @@ exports.updateComment = async (req, res) => {
         }
 
         // 确保只有评论作者可以更新评论
-        if (comment.author.toString() !== req.user.userId) {
+        if (comment.author.toString() !== req.user._id.toString()) {
             console.log(chalk.yellow('更新评论失败: 没有权限'));
             return res.status(403).json({ message: '没有权限修改此评论' });
         }
@@ -280,7 +280,7 @@ exports.deleteComment = async (req, res) => {
         }
 
         // 确保只有评论作者可以删除评论
-        if (comment.author.toString() !== req.user.userId) {
+        if (comment.author.toString() !== req.user._id.toString()) {
             return res.status(403).json({ message: '没有权限删除此评论' });
         }
 
