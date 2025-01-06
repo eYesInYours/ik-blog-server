@@ -74,9 +74,10 @@ exports.login = async (req, res) => {
         
         const user = await User.findOne({ email });
         if (!user) {
-            return res.status(CLIENT_ERROR.UNAUTHORIZED).json({ 
-                code: CLIENT_ERROR.UNAUTHORIZED,
-                message: '邮箱或密码错误' 
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({ 
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '该账号尚未注册，请先完成注册',
+                type: 'ACCOUNT_NOT_EXISTS'  // 添加一个类型标识，方便前端处理
             });
         }
 
@@ -84,7 +85,7 @@ exports.login = async (req, res) => {
         if (!isMatch) {
             return res.status(CLIENT_ERROR.UNAUTHORIZED).json({ 
                 code: CLIENT_ERROR.UNAUTHORIZED,
-                message: '邮箱或密码错误' 
+                message: '密码错误，请重试' 
             });
         }
 

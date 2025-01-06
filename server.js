@@ -49,7 +49,9 @@ app.use((req, res, next) => {
     // 允许特定域名访问
     const allowedOrigins = [
         'http://localhost:3010',
-        'http://159.75.125.36:3010'
+        'http://localhost:3333',
+        'http://159.75.125.36:3010',
+        'http://159.75.125.36:3333'
     ];
     const origin = req.headers.origin;
     if (allowedOrigins.includes(origin)) {

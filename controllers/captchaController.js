@@ -37,7 +37,7 @@ exports.getCaptcha = (req, res) => {
 // 验证用户输入的验证码
 exports.verifyCaptcha = (req, res) => {
     try {
-        const captchaText = typeof req.body === 'string' ? req.body : req.body.captcha;
+        const captchaText = typeof req.body === 'string' ? req.body : req.body.code;
         console.log('收到的验证码:', captchaText);
 
         // 检查会话中是否有验证码

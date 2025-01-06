@@ -204,11 +204,6 @@ exports.deleteArticle = async (req, res) => {
             return res.status(404).json({ message: '文章不存在' });
         }
 
-        // 确保只有作者可以删除文章
-        if (article.author.toString() !== req.user._id.toString()) {
-            return res.status(403).json({ message: '只有作者可以删除文章' });
-        }
-
         await article.deleteOne();
         res.json({ 
             code: SUCCESS.OK,
