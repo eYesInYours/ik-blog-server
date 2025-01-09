@@ -11,7 +11,7 @@ exports.createArticle = async (req, res) => {
         console.log(chalk.blue('创建文章请求数据:'), req.body);
         console.log(chalk.blue('当前用户信息:'), req.user);
 
-        const { title, content, tags, category, status, allowComment, coverImage, summary } = req.body;
+        const { title, content, tags, category, categoryName, status, allowComment, cover, summary } = req.body;
 
         // 获取作者信息包括头像
         const author = await User.findById(req.user._id);
@@ -29,9 +29,10 @@ exports.createArticle = async (req, res) => {
             content,
             tags,
             category,
+            categoryName,
             status: status || 'published',
             allowComment: allowComment ?? true,
-            cover: coverImage,
+            cover,
             summary,
             author: req.user._id,
             authorAvatar: author.avatar || ''
@@ -61,15 +62,57 @@ exports.getArticles = async (req, res) => {
         const articles = await Article.find({ status: 'published' })
             .populate('author', 'username avatar')
             .populate('category', 'name')
+            .populate({
+                path: 'comments',
+                populate: [
+                    {
+                        path: 'author',
+                        select: 'username avatar'
+                    },
+                    {
+                        path: 'parentComment',
+                        populate: {
+                            path: 'author',
+                            select: 'username avatar'
+                        }
+                    }
+                ],
+                options: { sort: { createdAt: -1 } }
+            })
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
 
         const total = await Article.countDocuments({ status: 'published' });
 
+        // 处理评论数据结构
+        const articlesWithFormattedComments = articles.map(article => {
+            const articleObj = article.toObject();
+            
+            // 区分主评论和回复
+            const mainComments = articleObj.comments.filter(comment => !comment.parentComment);
+            const replies = articleObj.comments.filter(comment => comment.parentComment);
+            
+            // 构建评论树
+            articleObj.comments = mainComments.map(mainComment => ({
+                ...mainComment,
+                replies: replies
+                    .filter(reply => reply.parentComment._id.toString() === mainComment._id.toString())
+                    .map(reply => ({
+                        ...reply,
+                        replyTo: reply.parentComment
+                    }))
+            }));
+            
+            return articleObj;
+        });
+
         console.log(chalk.green('获取文章列表成功, 总数:', total));
         res.json(success({
-            articles,
+            articles: articlesWithFormattedComments.map(article => ({
+                ...article,
+                likes: article.likes.length
+            })),
             pagination: {
                 total,
                 totalPages: Math.ceil(total / limit),
@@ -109,8 +152,11 @@ exports.getArticle = async (req, res) => {
             );
         }
 
-        // 获取文章的所有评论
-        const comments = await Comment.find({ article: req.params.id })
+        // 获取文章的所有评论（使用新的评论模型结构）
+        const comments = await Comment.find({ 
+            target: req.params.id,
+            targetType: 'Article'
+        })
             .populate('author', 'username avatar')
             .populate({
                 path: 'parentComment',
@@ -119,38 +165,26 @@ exports.getArticle = async (req, res) => {
             .sort({ createdAt: 1 });
 
         // 构建评论树
-        const commentMap = new Map();
-        const rootComments = [];
-
-        comments.forEach(comment => {
-            commentMap.set(comment._id.toString(), {
-                ...comment.toObject(),
-                replies: []
-            });
-        });
-
-        comments.forEach(comment => {
-            const commentData = commentMap.get(comment._id.toString());
-            if (comment.parentComment) {
-                const parentComment = commentMap.get(comment.parentComment._id.toString());
-                if (parentComment) {
-                    parentComment.replies.push({
-                        ...commentData,
-                        replyTo: {
-                            _id: comment.parentComment._id,
-                            author: comment.parentComment.author,
-                            content: comment.parentComment.content
-                        }
-                    });
-                }
-            } else {
-                rootComments.push(commentData);
-            }
+        const mainComments = comments.filter(comment => !comment.parentComment);
+        const replies = comments.filter(comment => comment.parentComment);
+        
+        const formattedComments = mainComments.map(mainComment => {
+            const commentObj = mainComment.toObject();
+            commentObj.replies = replies
+                .filter(reply => 
+                    reply.parentComment._id.toString() === mainComment._id.toString()
+                )
+                .map(reply => ({
+                    ...reply.toObject(),
+                    replyTo: reply.parentComment
+                }));
+            return commentObj;
         });
 
         // 将评论树添加到文章数据中
         const articleData = article.toObject();
-        articleData.comments = rootComments;
+        articleData.comments = formattedComments;
+        articleData.likes = article.likes.length;
 
         console.log(chalk.green('获取文章成功:', article.title));
         res.json(success(articleData));
@@ -165,22 +199,19 @@ exports.getArticle = async (req, res) => {
 // 更新文章
 exports.updateArticle = async (req, res) => {
     try {
-        const { title, content, tags, cover } = req.body;
+        const { title, content, tags, cover, categoryName, category } = req.body;
         const article = await Article.findById(req.params.id);
 
         if (!article) {
             return res.status(404).json({ message: '文章不存在' });
         }
 
-        // 确保只有作者可以更新文章
-        if (article.author.toString() !== req.user._id.toString()) {
-            return res.status(403).json({ message: '只有作者可以更新文章' });
-        }
-
         article.title = title || article.title;
         article.content = content || article.content;
         article.tags = tags || article.tags;
         article.cover = cover || article.cover;
+        article.categoryName = categoryName || article.categoryName;
+        article.category = category || article.category;
         article.updatedAt = Date.now();
 
         await article.save();
@@ -360,5 +391,158 @@ exports.batchDeleteArticles = async (req, res) => {
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             message: '批量删除文章失败'
         });
+    }
+};
+
+// 点赞/取消点赞文章
+exports.toggleLike = async (req, res) => {
+    try {
+        const article = await Article.findById(req.params.id);
+        
+        if (!article) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                message: '文章不存在'
+            });
+        }
+        
+        const index = article.likes.indexOf(req.user._id);
+        if (index === -1) {
+            article.likes.push(req.user._id);
+        } else {
+            article.likes.splice(index, 1);
+        }
+        
+        await article.save();
+        
+        res.json({
+            code: SUCCESS.OK,
+            message: index === -1 ? '点赞成功' : '取消点赞成功',
+            data: {
+                likes: article.likes.length
+            }
+        });
+    } catch (error) {
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            message: '操作失败'
+        });
+    }
+};
+
+// 获取文章归档列表
+exports.getArticleArchives = async (req, res) => {
+    try {
+        const { type = 'date' } = req.query; // date, tag, category
+
+        console.log(chalk.blue('获取文章归档请求参数:', type));
+        
+        // 获取所有已发布的文章
+        const articles = await Article.find({ status: 'published' })
+            .select('title createdAt tags category likes comments')
+            .sort({ createdAt: -1 });
+        
+        let archiveData = {};
+        
+        switch (type) {
+            case 'date':
+                // 按年月分组
+                articles.forEach(article => {
+                    const date = new Date(article.createdAt);
+                    const year = date.getFullYear();
+                    const month = date.getMonth() + 1;
+                    
+                    if (!archiveData[year]) {
+                        archiveData[year] = {};
+                    }
+                    if (!archiveData[year][month]) {
+                        archiveData[year][month] = [];
+                    }
+                    
+                    archiveData[year][month].push({
+                        _id: article._id,
+                        title: article.title,
+                        createdAt: article.createdAt,
+                        likes: article.likes.length,
+                        comments: article.comments.length
+                    });
+                });
+                
+                // 转换为前端需要的格式
+                archiveData = Object.entries(archiveData)
+                    .sort(([yearA], [yearB]) => Number(yearB) - Number(yearA))
+                    .map(([year, months]) => ({
+                        year: Number(year),
+                        count: Object.values(months).flat().length,
+                        months: Object.entries(months).map(([month, articles]) => ({
+                            month: Number(month),
+                            articles,
+                            count: articles.length
+                        }))
+                    }));
+                break;
+                
+            case 'tag':
+                // 按标签分组
+                const tagMap = new Map();
+                articles.forEach(article => {
+                    article.tags.forEach(tag => {
+                        if (!tagMap.has(tag)) {
+                            tagMap.set(tag, []);
+                        }
+                        tagMap.get(tag).push({
+                            _id: article._id,
+                            title: article.title,
+                            createdAt: article.createdAt,
+                            likes: article.likes.length,
+                            comments: article.comments.length
+                        });
+                    });
+                });
+                
+                archiveData = Array.from(tagMap.entries())
+                    .map(([tag, articles]) => ({
+                        tag,
+                        articles,
+                        count: articles.length
+                    }))
+                    .sort((a, b) => b.count - a.count);
+                break;
+                
+            case 'category':
+                // 按分类分组
+                const categoryMap = new Map();
+                articles.forEach(article => {
+                    if (!categoryMap.has(article.category)) {
+                        categoryMap.set(article.category, []);
+                    }
+                    // 查询category的name
+                    categoryMap.get(article.category).push({
+                        _id: article._id,
+                        title: article.title,
+                        createdAt: article.createdAt,
+                        likes: article.likes.length,
+                        comments: article.comments.length
+                    });
+                });
+                
+                archiveData = Array.from(categoryMap.entries())
+                    .map(([category, articles]) => ({
+                        category,
+                        articles,
+                        count: articles.length
+                    }))
+                    .sort((a, b) => b.count - a.count);
+                break;
+        }
+        
+        res.json(success({
+            type,
+            archives: archiveData,
+            total: articles.length
+        }));
+    } catch (err) {
+        console.error(chalk.red('获取文章归档错误:'), err);
+        res.status(500).json(
+            error(SERVER_ERROR.INTERNAL_ERROR, '获取文章归档失败')
+        );
     }
 }; 

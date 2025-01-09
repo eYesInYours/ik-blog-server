@@ -1,14 +1,30 @@
 const Comment = require('../models/Comment');
 const Article = require('../models/Article');
+const Diary = require('../models/Diary');
 const User = require('../models/User');
 const chalk = require('chalk');
+const { SUCCESS } = require('../constants/httpStatus');
 
 // 创建评论
 exports.createComment = async (req, res) => {
     try {
         console.log(chalk.blue('创建评论请求数据:'), req.body);
-        const { content, articleId, parentCommentId } = req.body;
+        const { content, articleId, diaryId, parentCommentId } = req.body;
         const author = await User.findById(req.user._id);
+
+        // 验证评论目标存在
+        let targetModel, target;
+        if (articleId) {
+            targetModel = Article;
+            target = await Article.findById(articleId);
+        } else if (diaryId) {
+            targetModel = Diary;
+            target = await Diary.findById(diaryId);
+        }
+
+        if (!target) {
+            return res.status(404).json({ message: '评论目标不存在' });
+        }
 
         let rootCommentId = null;
         // 如果是回复评论，验证父评论是否存在
@@ -18,8 +34,9 @@ exports.createComment = async (req, res) => {
                 console.log(chalk.yellow('创建评论失败: 父评论不存在'));
                 return res.status(404).json({ message: '要回复的评论不存在' });
             }
-            // 确保父评论属于同一篇文章
-            if (parentComment.article.toString() !== articleId) {
+            // 确保父评论属于同一目标
+            const targetId = articleId || diaryId;
+            if (parentComment.target.toString() !== targetId) {
                 console.log(chalk.yellow('创建评论失败: 父评论不属于该文章'));
                 return res.status(400).json({ message: '评论关联错误' });
             }
@@ -38,7 +55,8 @@ exports.createComment = async (req, res) => {
 
         const comment = new Comment({
             content,
-            article: articleId,
+            target: articleId || diaryId,
+            targetType: articleId ? 'Article' : 'Diary',
             author: req.user._id,
             authorAvatar: author.avatar,
             parentComment: rootCommentId || parentCommentId || null
@@ -46,9 +64,9 @@ exports.createComment = async (req, res) => {
 
         await comment.save();
 
-        // 更新文章的评论数组
-        await Article.findByIdAndUpdate(
-            articleId,
+        // 更新目标的评论数组
+        await targetModel.findByIdAndUpdate(
+            articleId || diaryId,
             { $push: { comments: comment._id } }
         );
 
@@ -75,7 +93,7 @@ exports.createComment = async (req, res) => {
                 });
 
             const replies = await Comment.find({
-                article: articleId,
+                target: articleId || diaryId,
                 parentComment: rootComment._id
             })
             .populate('author', 'username avatar')
@@ -114,23 +132,27 @@ exports.createComment = async (req, res) => {
     }
 };
 
-// 获取文章的所有评论
-exports.getArticleComments = async (req, res) => {
+// 获取评论列表（支持文章和日记）
+exports.getComments = async (req, res) => {
     try {
-        const { articleId } = req.params;
-        console.log(chalk.blue('获取文章评论请求, 文章ID:', articleId));
+        const { articleId, diaryId } = req.params;
+        const targetId = articleId || diaryId;
+        const targetType = articleId ? 'Article' : 'Diary';
+        console.log(chalk.blue(`获取${targetType}评论请求, ID:`, targetId));
 
         // 先获取所有主评论
         const mainComments = await Comment.find({ 
-            article: articleId,
+            target: targetId,
+            targetType,
             parentComment: null  // 只获取主评论
         })
             .populate('author', 'username avatar')
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: 1 });
 
         // 获取所有回复
         const replies = await Comment.find({
-            article: articleId,
+            target: targetId,
+            targetType,
             parentComment: { $ne: null }  // 获取所有回复
         })
             .populate('author', 'username avatar')
@@ -138,7 +160,7 @@ exports.getArticleComments = async (req, res) => {
                 path: 'parentComment',
                 populate: { path: 'author', select: 'username avatar' }
             })
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: 1 });
 
         // 构建评论树
         const commentTree = mainComments.map(comment => {
@@ -157,8 +179,15 @@ exports.getArticleComments = async (req, res) => {
             };
         });
 
-        console.log(chalk.green('获取评论列表成功, 总数:', mainComments.length + replies.length));
-        res.json(commentTree);
+        // 最后将整个评论树反转，使最新的评论在前面
+        commentTree.reverse();
+
+        console.log(chalk.green(`获取${targetType}评论列表成功, 总数:`, mainComments.length + replies.length));
+        res.json({
+            code: SUCCESS.OK,
+            data: commentTree,
+            message: '获取评论列表成功'
+        });
     } catch (error) {
         console.error(chalk.red('获取评论列表错误:'), error);
         res.status(500).json({ message: '获取评论列表失败' });
@@ -220,7 +249,8 @@ exports.updateComment = async (req, res) => {
                 .populate('author', 'username avatar');
 
             const replies = await Comment.find({
-                article: comment.article,
+                target: comment.target,
+                targetType: comment.targetType,
                 parentComment: rootComment._id
             })
             .populate('author', 'username avatar')
@@ -240,7 +270,8 @@ exports.updateComment = async (req, res) => {
         } else {
             // 如果是主评论，获取其所有回复
             const replies = await Comment.find({
-                article: comment.article,
+                target: comment.target,
+                targetType: comment.targetType,
                 parentComment: comment._id
             })
             .populate('author', 'username avatar')
@@ -279,19 +310,21 @@ exports.deleteComment = async (req, res) => {
             return res.status(404).json({ message: '评论不存在' });
         }
 
-        // 确保只有评论作者可以删除评论
-        if (comment.author.toString() !== req.user._id.toString()) {
-            return res.status(403).json({ message: '没有权限删除此评论' });
-        }
+        // 根据评论类型获取对应的模型
+        const targetModel = comment.targetType === 'Article' ? Article : Diary;
 
-        // 从文章的评论数组中移除
-        await Article.findByIdAndUpdate(
-            comment.article,
+        // 从目标的评论数组中移除
+        await targetModel.findByIdAndUpdate(
+            comment.target,
             { $pull: { comments: comment._id } }
         );
 
         await comment.deleteOne();
-        res.json({ message: '评论删除成功' });
+        res.json({ 
+            code: SUCCESS.OK,
+            message: '评论删除成功',
+            data: null
+        });
     } catch (error) {
         console.error(chalk.red('删除评论错误:'), error);
         res.status(500).json({ message: '删除评论失败' });
@@ -301,16 +334,25 @@ exports.deleteComment = async (req, res) => {
 // 获取所有评论（管理接口）
 exports.getAllComments = async (req, res) => {
     try {
-        const { page = 1, limit = 10, keyword = '' } = req.query;
+        const { page = 1, limit = 10, keyword = '', type } = req.query;
 
         // 构建查询条件
         const query = keyword ? {
             content: new RegExp(keyword, 'i')
         } : {};
 
+        // 根据类型筛选
+        if (type && ['Article', 'Diary'].includes(type)) {
+            query.targetType = type;
+        }
+
         const comments = await Comment.find(query)
             .populate('author', 'username avatar')
-            .populate('article', 'title')
+            .populate({
+                path: 'target',
+                refPath: 'targetType',
+                select: 'title content'  // 文章有title，朋友圈有content
+            })
             .populate({
                 path: 'parentComment',
                 populate: { path: 'author', select: 'username avatar' }
@@ -322,16 +364,20 @@ exports.getAllComments = async (req, res) => {
         const total = await Comment.countDocuments(query);
 
         res.json({
-            comments,
-            pagination: {
-                total,
-                totalPages: Math.ceil(total / limit),
-                currentPage: parseInt(page),
-                limit: parseInt(limit)
-            }
+            code: SUCCESS.OK,
+            data: {
+                comments,
+                pagination: {
+                    total,
+                    totalPages: Math.ceil(total / limit),
+                    currentPage: parseInt(page),
+                    limit: parseInt(limit)
+                }
+            },
+            message: '获取评论列表成功'
         });
     } catch (error) {
         console.error(chalk.red('获取评论列表错误:'), error);
-        res.status(SERVER_ERROR.INTERNAL_ERROR).json({ message: '获取评论列表失败' });
+        res.status(500).json({ message: '获取评论列表失败' });
     }
 }; 

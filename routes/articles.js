@@ -7,6 +7,9 @@ const authorOnly = require('../middleware/authorOnly');
 // 获取文章列表（公开）
 router.get('/', articleController.getArticles);
 
+// 获取文章归档
+router.get('/archives', articleController.getArticleArchives);
+
 // 获取单个文章（公开）
 router.get('/:id', articleController.getArticle);
 
@@ -27,5 +30,8 @@ router.put('/admin/:id/status', auth, authorOnly, articleController.updateArticl
 
 // 批量删除文章（管理接口）
 router.post('/admin/batch-delete', auth, authorOnly, articleController.batchDeleteArticles);
+
+// 点赞/取消点赞文章
+router.post('/:id/like', auth, articleController.toggleLike);
 
 module.exports = router; 

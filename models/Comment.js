@@ -16,10 +16,15 @@ const commentSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    article: {
+    target: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Article',
+        refPath: 'targetType',
         required: true
+    },
+    targetType: {
+        type: String,
+        required: true,
+        enum: ['Article', 'Diary']
     },
     parentComment: {
         type: mongoose.Schema.Types.ObjectId,

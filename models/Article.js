@@ -14,6 +14,10 @@ const articleSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    categoryName: {
+        type: String,
+        required: true
+    },
     cover: {
         type: String,
         default: null
@@ -49,7 +53,11 @@ const articleSchema = new mongoose.Schema({
     updatedAt: {
         type: Date,
         default: Date.now
-    }
+    },
+    likes: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }]
 }, {
     timestamps: true
 });
