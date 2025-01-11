@@ -19,4 +19,7 @@ router.delete('/:id', auth, commentController.deleteComment);
 // 管理端接口（需要管理员权限）
 router.get('/admin/all', auth, authorOnly, commentController.getAllComments);
 
+// 评论点赞
+router.put('/:id/like', auth, commentController.likeComment);
+
 module.exports = router; 

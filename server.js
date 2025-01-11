@@ -91,7 +91,7 @@ apiRouter.use('/banners', require('./routes/banners'));
 apiRouter.use('/captcha', require('./routes/captcha'));
 apiRouter.use('/categories', require('./routes/categories'));
 apiRouter.use('/diaries', require('./routes/diary'));
-
+apiRouter.use('/notifications', require('./routes/notifications'));
 // 挂载 API 路由到 /api 路径
 app.use('/api', apiRouter);
 

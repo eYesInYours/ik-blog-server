@@ -34,4 +34,7 @@ router.post('/admin/batch-delete', auth, authorOnly, articleController.batchDele
 // 点赞/取消点赞文章
 router.post('/:id/like', auth, articleController.toggleLike);
 
+// 收藏/取消收藏文章（需要登录）
+router.post('/:id/collect', auth, articleController.toggleCollect);
+
 module.exports = router; 

@@ -8,7 +8,6 @@ const { upload, handleMulterError } = require('../middleware/upload');
 // 上传文件（需要作者权限）
 router.post('/upload', 
     auth, 
-    authorOnly,
     upload.single('file'), 
     handleMulterError,
     fileController.uploadFile

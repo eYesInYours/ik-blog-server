@@ -19,4 +19,7 @@ router.get('/admin/all', auth, authorOnly, userController.getAllUsers);
 // 禁用/启用用户（管理接口）
 router.put('/admin/:userId/status', auth, authorOnly, userController.toggleUserStatus);
 
+// 获取作者信息（无需登录）
+router.get('/author', userController.getAuthorInfo);
+
 module.exports = router; 

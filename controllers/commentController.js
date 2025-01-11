@@ -3,7 +3,12 @@ const Article = require('../models/Article');
 const Diary = require('../models/Diary');
 const User = require('../models/User');
 const chalk = require('chalk');
-const { SUCCESS } = require('../constants/httpStatus');
+const { SUCCESS, CLIENT_ERROR } = require('../constants/httpStatus');
+const { 
+    createCommentNotification, 
+    createReplyNotification, 
+    createCommentLikeNotification 
+} = require('./notificationController');
 
 // 创建评论
 exports.createComment = async (req, res) => {
@@ -121,13 +126,31 @@ exports.createComment = async (req, res) => {
         }
 
         console.log(chalk.green('评论创建成功:', comment._id));
-        console.log(chalk.blue('返回的评论数据:', JSON.stringify(responseData, null, 2)));
+
+        // 创建评论后，发送通知
+        // 如果是回复评论
+        if (parentCommentId) {
+            const parentComment = await Comment.findById(parentCommentId)
+                .populate('author', 'username');
+            
+            // 给被回复的评论作者发送通知
+            await createReplyNotification(comment, parentComment);
+        } else {
+            // 如果是对文章的直接评论，通知文章作者
+            const article = await Article.findById(articleId)
+                .populate('author', 'username');
+            
+            if (article.author._id.toString() !== req.user._id.toString()) {
+                await createCommentNotification(comment, article);
+            }
+        }
+
         res.status(201).json({
             message: '评论创建成功',
             comment: responseData
         });
     } catch (error) {
-        console.error(chalk.red('创建评论错误:'), error);
+        console.error('创建评论错误:', error);
         res.status(500).json({ message: '创建评论失败' });
     }
 };
@@ -135,10 +158,11 @@ exports.createComment = async (req, res) => {
 // 获取评论列表（支持文章和日记）
 exports.getComments = async (req, res) => {
     try {
+        console.log(chalk.blue('获取评论列表请求参数:', req.params));
         const { articleId, diaryId } = req.params;
         const targetId = articleId || diaryId;
         const targetType = articleId ? 'Article' : 'Diary';
-        console.log(chalk.blue(`获取${targetType}评论请求, ID:`, targetId));
+        const userId = req.user?._id;
 
         // 先获取所有主评论
         const mainComments = await Comment.find({ 
@@ -147,7 +171,8 @@ exports.getComments = async (req, res) => {
             parentComment: null  // 只获取主评论
         })
             .populate('author', 'username avatar')
-            .sort({ createdAt: 1 });
+            .sort({ createdAt: -1 })
+            .lean();
 
         // 获取所有回复
         const replies = await Comment.find({
@@ -158,39 +183,55 @@ exports.getComments = async (req, res) => {
             .populate('author', 'username avatar')
             .populate({
                 path: 'parentComment',
+                select: 'author content',  // 只获取必要的字段
                 populate: { path: 'author', select: 'username avatar' }
             })
-            .sort({ createdAt: 1 });
+            .sort({ createdAt: 1 })
+            .lean();
 
-        // 构建评论树
-        const commentTree = mainComments.map(comment => {
-            const commentData = comment.toObject();
-            // 找出所有属于这个主评论的回复
-            const commentReplies = replies.filter(reply => 
-                findRootParentId(reply, [...mainComments, ...replies]) === comment._id.toString()
-            );
-            
+        // 处理评论的点赞信息
+        const processComment = (comment) => {
+            const likesCount = comment.likes?.length || 0;
+            const isLiked = userId ? comment.likes?.some(id => id.toString() === userId.toString()) : false;
+
+            // 删除不需要的字段
+            const { likes, __v, updatedAt, authorAvatar, ...rest } = comment;
+
             return {
-                ...commentData,
-                replies: commentReplies.map(reply => ({
-                    ...reply.toObject(),
-                    replyTo: reply.parentComment
-                }))
+                ...rest,
+                likes: likesCount,
+                isLiked
+            };
+        };
+
+        // 处理主评论和回复
+        const processedMainComments = mainComments.map(comment => {
+            const commentReplies = replies.filter(reply => 
+                reply.parentComment._id.toString() === comment._id.toString()
+            );
+
+            return {
+                ...processComment(comment),
+                replies: commentReplies.map(reply => {
+                    const processedReply = processComment(reply);
+                    // 简化 replyTo 对象，只保留必要信息
+                    const { author, content, _id } = reply.parentComment;
+                    processedReply.replyTo = { author, content, _id };
+                    return processedReply;
+                })
             };
         });
 
-        // 最后将整个评论树反转，使最新的评论在前面
-        commentTree.reverse();
+        console.log(chalk.green('获取评论列表成功, 总数:', mainComments.length));
 
-        console.log(chalk.green(`获取${targetType}评论列表成功, 总数:`, mainComments.length + replies.length));
         res.json({
             code: SUCCESS.OK,
-            data: commentTree,
+            data: processedMainComments,
             message: '获取评论列表成功'
         });
     } catch (error) {
-        console.error(chalk.red('获取评论列表错误:'), error);
-        res.status(500).json({ message: '获取评论列表失败' });
+        console.error(chalk.red('获取评论列表错误:', error));
+        res.status(500).json({ message: '获取评论失败' });
     }
 };
 
@@ -379,5 +420,70 @@ exports.getAllComments = async (req, res) => {
     } catch (error) {
         console.error(chalk.red('获取评论列表错误:'), error);
         res.status(500).json({ message: '获取评论列表失败' });
+    }
+};
+
+// 点赞评论
+exports.likeComment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user._id;
+
+        console.log('Liking comment:', { commentId: id, userId });
+
+        const comment = await Comment.findById(id)
+            .populate({
+                path: 'author',
+                select: '_id username avatar'
+            });
+
+        if (!comment) {
+            console.log('Comment not found:', id);
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                message: '评论不存在'
+            });
+        }
+
+        console.log('Found comment:', {
+            id: comment._id,
+            author: comment.author,
+            content: comment.content
+        });
+
+        const isLiked = comment.likes.some(id => id.toString() === userId.toString());
+        
+        if (!isLiked) {
+            comment.likes.push(userId);
+            console.log('Creating notification for comment like');
+            
+            if (comment.author._id.toString() !== userId.toString()) {
+                try {
+                    const notification = await createCommentLikeNotification(req.user, comment);
+                    console.log('Notification created successfully:', notification);
+                } catch (notificationError) {
+                    console.error('Failed to create notification:', notificationError);
+                }
+            } else {
+                console.log('Skip notification - user liking their own comment');
+            }
+        } else {
+            comment.likes = comment.likes.filter(id => id.toString() !== userId.toString());
+            console.log('Unlike comment - removing like');
+        }
+
+        await comment.save();
+        console.log('Comment saved successfully');
+
+        res.json({
+            code: SUCCESS.OK,
+            data: {
+                likes: comment.likes.length,
+                isLiked: !isLiked
+            },
+            message: isLiked ? '取消点赞成功' : '点赞成功'
+        });
+    } catch (error) {
+        console.error('Error in likeComment:', error);
+        res.status(500).json({ message: '操作失败' });
     }
 }; 

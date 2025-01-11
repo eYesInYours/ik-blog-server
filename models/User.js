@@ -14,6 +14,12 @@ const userSchema = new mongoose.Schema({
         trim: true,
         lowercase: true
     },
+    intro: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: 200
+    },
     password: {
         type: String,
         required: [true, '密码不能为空'],
