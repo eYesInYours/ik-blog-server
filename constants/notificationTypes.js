@@ -1,9 +1,10 @@
 // 通知动作类型
 exports.NOTIFICATION_ACTIONS = {
-  COMMENT_ARTICLE: '评论了你的文章',
-  REPLY_COMMENT: '回复了你的评论',
-  LIKE_ARTICLE: '点赞了你的文章',
-  LIKE_COMMENT: '点赞了你的评论'
+    ARTICLE_COMMENT: 'article_comment',
+    ARTICLE_LIKE: 'article_like',
+    ARTICLE_COLLECT: 'article_collect',
+    COMMENT_LIKE: 'comment_like',
+    COMMENT_REPLY: 'comment_reply',
 }
 
 // 通知类型

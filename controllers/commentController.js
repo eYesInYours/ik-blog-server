@@ -2,12 +2,14 @@ const Comment = require('../models/Comment');
 const Article = require('../models/Article');
 const Diary = require('../models/Diary');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const chalk = require('chalk');
-const { SUCCESS, CLIENT_ERROR } = require('../constants/httpStatus');
-const { 
-    createCommentNotification, 
-    createReplyNotification, 
-    createCommentLikeNotification 
+const { SUCCESS, CLIENT_ERROR, SERVER_ERROR } = require('../constants/httpStatus');
+const { success, error } = require('../utils/responseHandler');
+const {
+    createCommentNotification,
+    createReplyNotification,
+    createCommentLikeNotification
 } = require('./notificationController');
 
 // 创建评论
@@ -39,19 +41,26 @@ exports.createComment = async (req, res) => {
                 console.log(chalk.yellow('创建评论失败: 父评论不存在'));
                 return res.status(404).json({ message: '要回复的评论不存在' });
             }
+
             // 确保父评论属于同一目标
             const targetId = articleId || diaryId;
-            if (parentComment.target.toString() !== targetId) {
+            // 检查 parentComment.targetId 是否存在
+            if (!parentComment.targetId) {
+                console.log(chalk.yellow('创建评论失败: 父评论缺少目标ID'));
+                return res.status(400).json({ message: '评论数据错误' });
+            }
+
+            if (parentComment.targetId.toString() !== targetId) {
                 console.log(chalk.yellow('创建评论失败: 父评论不属于该文章'));
                 return res.status(400).json({ message: '评论关联错误' });
             }
+
             // 如果父评论已经是回复，则使用其父评论作为新评论的父评论
             if (parentComment.parentComment) {
                 const rootComment = await Comment.findById(parentComment.parentComment);
                 if (rootComment) {
                     console.log(chalk.blue('回复评论的回复，关联到原始评论'));
                     rootCommentId = rootComment._id;
-                    // 保持原始的 parentCommentId，用于显示"回复谁"
                 }
             } else {
                 rootCommentId = parentComment._id;
@@ -60,10 +69,9 @@ exports.createComment = async (req, res) => {
 
         const comment = new Comment({
             content,
-            target: articleId || diaryId,
+            targetId: articleId || diaryId,
             targetType: articleId ? 'Article' : 'Diary',
             author: req.user._id,
-            authorAvatar: author.avatar,
             parentComment: rootCommentId || parentCommentId || null
         });
 
@@ -98,22 +106,22 @@ exports.createComment = async (req, res) => {
                 });
 
             const replies = await Comment.find({
-                target: articleId || diaryId,
+                targetId: articleId || diaryId,
                 parentComment: rootComment._id
             })
-            .populate('author', 'username avatar')
-            .populate({
-                path: 'parentComment',
-                populate: { path: 'author', select: 'username avatar' }
-            })
-            .sort({ createdAt: 1 });
+                .populate('author', 'username avatar')
+                .populate({
+                    path: 'parentComment',
+                    populate: { path: 'author', select: 'username avatar' }
+                })
+                .sort({ createdAt: 1 });
 
             responseData = {
                 ...rootComment.toObject(),
                 replies: replies.map(reply => ({
                     ...reply.toObject(),
-                    replyTo: reply.parentComment._id.toString() === rootComment._id.toString() 
-                        ? rootComment 
+                    replyTo: reply.parentComment._id.toString() === rootComment._id.toString()
+                        ? rootComment
                         : reply.parentComment
                 }))
             };
@@ -128,20 +136,25 @@ exports.createComment = async (req, res) => {
         console.log(chalk.green('评论创建成功:', comment._id));
 
         // 创建评论后，发送通知
-        // 如果是回复评论
+        // 新创建一个评论者对象数据，给通知使用
+        const newComment = {
+            ...comment.toObject(),
+            author: {
+                _id: req.user._id,
+                username: req.user.username,
+                avatar: req.user.avatar
+            }
+        }
         if (parentCommentId) {
             const parentComment = await Comment.findById(parentCommentId)
-                .populate('author', 'username');
-            
-            // 给被回复的评论作者发送通知
-            await createReplyNotification(comment, parentComment);
+                .populate('author', 'username avatar');
+            await createReplyNotification(newComment, parentComment);
         } else {
-            // 如果是对文章的直接评论，通知文章作者
             const article = await Article.findById(articleId)
-                .populate('author', 'username');
-            
+                .populate('author', 'username avatar');
+
             if (article.author._id.toString() !== req.user._id.toString()) {
-                await createCommentNotification(comment, article);
+                await createCommentNotification(newComment, article);
             }
         }
 
@@ -165,8 +178,8 @@ exports.getComments = async (req, res) => {
         const userId = req.user?._id;
 
         // 先获取所有主评论
-        const mainComments = await Comment.find({ 
-            target: targetId,
+        const mainComments = await Comment.find({
+            targetId,
             targetType,
             parentComment: null  // 只获取主评论
         })
@@ -176,7 +189,7 @@ exports.getComments = async (req, res) => {
 
         // 获取所有回复
         const replies = await Comment.find({
-            target: targetId,
+            targetId,
             targetType,
             parentComment: { $ne: null }  // 获取所有回复
         })
@@ -206,7 +219,7 @@ exports.getComments = async (req, res) => {
 
         // 处理主评论和回复
         const processedMainComments = mainComments.map(comment => {
-            const commentReplies = replies.filter(reply => 
+            const commentReplies = replies.filter(reply =>
                 reply.parentComment._id.toString() === comment._id.toString()
             );
 
@@ -242,19 +255,19 @@ function findRootParentId(comment, allComments) {
     const maxDepth = 10; // 防止循环引用
 
     while (currentComment.parentComment && depth < maxDepth) {
-        const parentComment = allComments.find(c => 
+        const parentComment = allComments.find(c =>
             c._id.toString() === currentComment.parentComment._id.toString()
         );
-        
+
         if (!parentComment.parentComment) {
             // 找到了根评论
             return parentComment._id.toString();
         }
-        
+
         currentComment = parentComment;
         depth++;
     }
-    
+
     return null;
 }
 
@@ -294,12 +307,12 @@ exports.updateComment = async (req, res) => {
                 targetType: comment.targetType,
                 parentComment: rootComment._id
             })
-            .populate('author', 'username avatar')
-            .populate({
-                path: 'parentComment',
-                populate: { path: 'author', select: 'username avatar' }
-            })
-            .sort({ createdAt: 1 });
+                .populate('author', 'username avatar')
+                .populate({
+                    path: 'parentComment',
+                    populate: { path: 'author', select: 'username avatar' }
+                })
+                .sort({ createdAt: 1 });
 
             responseData = {
                 ...rootComment.toObject(),
@@ -315,12 +328,12 @@ exports.updateComment = async (req, res) => {
                 targetType: comment.targetType,
                 parentComment: comment._id
             })
-            .populate('author', 'username avatar')
-            .populate({
-                path: 'parentComment',
-                populate: { path: 'author', select: 'username avatar' }
-            })
-            .sort({ createdAt: 1 });
+                .populate('author', 'username avatar')
+                .populate({
+                    path: 'parentComment',
+                    populate: { path: 'author', select: 'username avatar' }
+                })
+                .sort({ createdAt: 1 });
 
             responseData = {
                 ...updatedComment.toObject(),
@@ -361,7 +374,7 @@ exports.deleteComment = async (req, res) => {
         );
 
         await comment.deleteOne();
-        res.json({ 
+        res.json({
             code: SUCCESS.OK,
             message: '评论删除成功',
             data: null
@@ -375,51 +388,49 @@ exports.deleteComment = async (req, res) => {
 // 获取所有评论（管理接口）
 exports.getAllComments = async (req, res) => {
     try {
-        const { page = 1, limit = 10, keyword = '', type } = req.query;
+        const { page = 1, limit = 10 } = req.query;
+        const skip = (page - 1) * limit;
 
-        // 构建查询条件
-        const query = keyword ? {
-            content: new RegExp(keyword, 'i')
-        } : {};
+        // 获取总评论数
+        const total = await Comment.countDocuments();
 
-        // 根据类型筛选
-        if (type && ['Article', 'Diary'].includes(type)) {
-            query.targetType = type;
-        }
-
-        const comments = await Comment.find(query)
+        const comments = await Comment.find()
             .populate('author', 'username avatar')
             .populate({
-                path: 'target',
-                refPath: 'targetType',
-                select: 'title content'  // 文章有title，朋友圈有content
+                path: 'targetId',
+                refPath: 'targetType'
             })
             .populate({
                 path: 'parentComment',
-                populate: { path: 'author', select: 'username avatar' }
+                populate: {
+                    path: 'author',
+                    select: 'username avatar'
+                }
             })
             .sort({ createdAt: -1 })
-            .skip((page - 1) * limit)
-            .limit(parseInt(limit));
+            .skip(skip)
+            .limit(Number(limit));
 
-        const total = await Comment.countDocuments(query);
-
-        res.json({
-            code: SUCCESS.OK,
-            data: {
-                comments,
-                pagination: {
-                    total,
-                    totalPages: Math.ceil(total / limit),
-                    currentPage: parseInt(page),
-                    limit: parseInt(limit)
-                }
-            },
-            message: '获取评论列表成功'
+        const processedComments = comments.map(comment => {
+            const commentObj = comment.toObject();
+            commentObj.likes = comment.likes?.length || 0;
+            return commentObj;
         });
-    } catch (error) {
-        console.error(chalk.red('获取评论列表错误:'), error);
-        res.status(500).json({ message: '获取评论列表失败' });
+
+        res.json(success({
+            pagination: {
+                total,
+                limit: Number(limit),
+                currentPage: Number(page),
+                totalPages: Math.ceil(total / limit)
+            },
+            comments: processedComments
+        }));
+    } catch (err) {
+        console.error('获取评论列表错误:', err);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json(
+            error(SERVER_ERROR.INTERNAL_ERROR, '获取评论列表失败')
+        );
     }
 };
 
@@ -451,24 +462,35 @@ exports.likeComment = async (req, res) => {
         });
 
         const isLiked = comment.likes.some(id => id.toString() === userId.toString());
-        
+
         if (!isLiked) {
+            // 添加点赞
             comment.likes.push(userId);
             console.log('Creating notification for comment like');
-            
+
+            // 如果不是给自己的评论点赞，才创建通知
             if (comment.author._id.toString() !== userId.toString()) {
                 try {
-                    const notification = await createCommentLikeNotification(req.user, comment);
-                    console.log('Notification created successfully:', notification);
+                    await createCommentLikeNotification(req.user, comment);
+                    console.log('Comment like notification created successfully');
                 } catch (notificationError) {
-                    console.error('Failed to create notification:', notificationError);
+                    console.error('Failed to create comment like notification:', notificationError);
                 }
             } else {
                 console.log('Skip notification - user liking their own comment');
             }
         } else {
+            // 取消点赞
             comment.likes = comment.likes.filter(id => id.toString() !== userId.toString());
             console.log('Unlike comment - removing like');
+
+            // 删除相关通知
+            await Notification.deleteOne({
+                recipient: comment.author._id,
+                sender: userId,
+                targetId: comment._id,
+                action: 'comment_like'
+            });
         }
 
         await comment.save();

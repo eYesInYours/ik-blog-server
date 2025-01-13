@@ -1,25 +1,19 @@
 const mongoose = require('mongoose');
 
 const commentSchema = new mongoose.Schema({
+    content: {
+        type: String,
+        required: true
+    },
     author: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
     },
-    authorAvatar: {
-        type: String,
-        default: function() {
-            return this.author.avatar;
-        }
-    },
-    content: {
-        type: String,
-        required: true
-    },
-    target: {
+    targetId: {
         type: mongoose.Schema.Types.ObjectId,
-        refPath: 'targetType',
-        required: true
+        required: true,
+        refPath: 'targetType'
     },
     targetType: {
         type: String,
@@ -28,17 +22,12 @@ const commentSchema = new mongoose.Schema({
     },
     parentComment: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Comment',
-        default: null
+        ref: 'Comment'
     },
     likes: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
-    }],
-    createdAt: {
-        type: Date,
-        default: Date.now
-    }
+    }]
 }, {
     timestamps: true
 });

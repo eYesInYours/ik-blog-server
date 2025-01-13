@@ -1,32 +1,40 @@
 const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema({
-  recipient: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  sender: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  type: {
+  // 通知类型
+  action: {
     type: String,
     enum: ['article_like', 'article_collect', 'article_comment', 'comment_like', 'comment_reply'],
     required: true
   },
-  action: {
-    type: String,
-    required: true
+  // 发送者
+  sender: {
+    // 发送者的数据Id，比如具体的评论Id
+    _id: mongoose.Schema.Types.ObjectId,
+    author: {
+      _id: mongoose.Schema.Types.ObjectId,
+      username: String,
+      avatar: String
+    },
+    content: String  // 发送者的操作内容（比如评论内容）
   },
-  target: {
-    type: mongoose.Schema.Types.Mixed,
-    required: true
+  // 接收者
+  recipient: {
+    // 接收者的数据Id，比如具体的评论Id
+    _id: mongoose.Schema.Types.ObjectId,
+    content: String,
+    author: {
+      _id: mongoose.Schema.Types.ObjectId,
+      username: String,
+      avatar: String
+    },
   },
+  // 目标Id：文章、日记的Id
+  targetId: mongoose.Schema.Types.ObjectId,
+  // 目标类型：文章、日记
   targetType: {
     type: String,
-    enum: ['Article', 'Comment'],
+    enum: ['Article', 'Diary', 'Comment'],
     required: true
   },
   isRead: {
