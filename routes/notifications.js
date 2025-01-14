@@ -1,24 +1,32 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const notificationController = require('../controllers/notificationController');
+const {
+    getNotifications,
+    markAsRead,
+    markAllAsRead,
+    getUnreadCount
+} = require('../controllers/notificationController');
 
 // 获取用户的通知列表
 router.get('/', 
   auth,
-  notificationController.getNotifications
+  getNotifications
 );
 
 // 标记单个通知为已读
 router.put('/:id/read',
   auth,
-  notificationController.markAsRead
+  markAsRead
 );
 
 // 标记所有通知为已读
 router.put('/read-all',
   auth,
-  notificationController.markAllAsRead
+  markAllAsRead
 );
+
+// 获取未读通知数
+router.get('/unread-count', auth, getUnreadCount);
 
 module.exports = router; 

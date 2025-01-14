@@ -242,4 +242,23 @@ exports.createCommentLikeNotification = async (user, comment) => {
     console.error('Error creating like notification:', err);
     throw err;
   }
+};
+
+// 获取当前用户未读通知数
+exports.getUnreadCount = async (req, res) => {
+    try {
+        const count = await Notification.countDocuments({
+            'recipient.author._id': req.user._id,
+            isRead: false
+        });
+
+        res.json(success({
+            count
+        }));
+    } catch (err) {
+        console.error('获取未读通知数失败:', err);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json(
+            error(SERVER_ERROR.INTERNAL_ERROR, '获取未读通知数失败')
+        );
+    }
 }; 
