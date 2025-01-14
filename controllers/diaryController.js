@@ -32,48 +32,72 @@ exports.createDiary = async (req, res) => {
 exports.getDiaries = async (req, res) => {
     try {
         const { page = 1, limit = 10 } = req.query;
+        const skip = (page - 1) * limit;
         
         // 获取朋友圈基本信息
         const diaries = await Diary.find()
             .populate('author', 'username avatar')
             .sort({ createdAt: -1 })
-            .skip((page - 1) * limit)
+            .skip(skip)
             .limit(parseInt(limit));
 
-        // 获取每个朋友圈的评论
+        // 获取所有日记的评论
         const diariesWithComments = await Promise.all(diaries.map(async diary => {
-            const comments = await Comment.find({
-                target: diary._id,
-                targetType: 'Diary'
+            // 获取主评论
+            const mainComments = await Comment.find({
+                targetId: diary._id,
+                targetType: 'Diary',
+                parentComment: null
             })
-            .populate('author', 'username avatar')
-            .populate({
-                path: 'parentComment',
-                populate: { path: 'author', select: 'username avatar' }
+                .populate('author', 'username avatar')
+                .sort({ createdAt: -1 })
+                .lean();
+
+            // 获取回复
+            const replies = await Comment.find({
+                targetId: diary._id,
+                targetType: 'Diary',
+                parentComment: { $ne: null }
             })
-            .sort({ createdAt: -1 });
-            
+                .populate('author', 'username avatar')
+                .populate({
+                    path: 'parentComment',
+                    select: 'author content',
+                    populate: { path: 'author', select: 'username avatar' }
+                })
+                .sort({ createdAt: 1 })
+                .lean();
+
             const diaryObj = diary.toObject();
-            
-            // 构建评论树
-            const mainComments = comments.filter(comment => !comment.parentComment);
-            const replies = comments.filter(comment => comment.parentComment);
-            
-            diaryObj.comments = mainComments.map(mainComment => ({
-                ...mainComment.toObject(),
-                replies: replies
-                    .filter(reply => 
-                        reply.parentComment._id.toString() === mainComment._id.toString()
-                    )
-                    .map(reply => ({
-                        ...reply.toObject(),
-                        replyTo: reply.parentComment
-                    }))
-            }));
-            
+
+            // 处理评论数据
+            diaryObj.comments = mainComments.map(comment => {
+                // 获取该评论的所有回复
+                const commentReplies = replies.filter(reply =>
+                    reply.parentComment._id.toString() === comment._id.toString()
+                ).map(reply => {
+                    const processedReply = {
+                        ...reply,
+                        likes: Array.isArray(reply.likes) ? reply.likes.length : 0,
+                        isLiked: req.user ? (Array.isArray(reply.likes) && reply.likes.some(id => id.toString() === req.user._id.toString())) : false
+                    };
+                    const { author, content, _id } = reply.parentComment;
+                    processedReply.replyTo = { author, content, _id };
+                    return processedReply;
+                });
+
+                return {
+                    ...comment,
+                    likes: Array.isArray(comment.likes) ? comment.likes.length : 0,
+                    isLiked: req.user ? (Array.isArray(comment.likes) && comment.likes.some(id => id.toString() === req.user._id.toString())) : false,
+                    replies: commentReplies
+                };
+            });
+
             return {
                 ...diaryObj,
-                likes: diary.likes.length
+                likes: Array.isArray(diary.likes) ? diary.likes.length : 0,
+                isLiked: req.user ? (Array.isArray(diary.likes) && diary.likes.some(id => id.toString() === req.user._id.toString())) : false
             };
         }));
 
@@ -91,6 +115,7 @@ exports.getDiaries = async (req, res) => {
             }
         });
     } catch (error) {
+        console.error(chalk.red('获取朋友圈列表失败:', error));
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             message: '获取列表失败'
         });

@@ -12,159 +12,79 @@ const {
     createCommentLikeNotification
 } = require('./notificationController');
 
+// 获取评论目标的作者信息
+const getTargetAuthor = async (targetId, targetType) => {
+    const Model = targetType === 'Article' ? Article : Diary;
+    const target = await Model.findById(targetId).populate('author', 'username avatar');
+    return target?.author;
+};
+
+// 创建评论通知
+const handleCommentNotification = async (newComment, targetId, targetType, userId) => {
+    const targetAuthor = await getTargetAuthor(targetId, targetType);
+    
+    if (targetAuthor && targetAuthor._id.toString() !== userId) {
+        await createCommentNotification(newComment, {
+            _id: targetId,
+            author: targetAuthor,
+            type: targetType
+        });
+    }
+};
+
 // 创建评论
 exports.createComment = async (req, res) => {
     try {
-        console.log(chalk.blue('创建评论请求数据:'), req.body);
         const { content, articleId, diaryId, parentCommentId } = req.body;
-        const author = await User.findById(req.user._id);
-
-        // 验证评论目标存在
-        let targetModel, target;
-        if (articleId) {
-            targetModel = Article;
-            target = await Article.findById(articleId);
-        } else if (diaryId) {
-            targetModel = Diary;
-            target = await Diary.findById(diaryId);
+        
+        // 确定评论目标
+        const targetId = articleId || diaryId;
+        const targetType = articleId ? 'Article' : 'Diary';
+        
+        if (!content || !targetId) {
+            return res.status(400).json({
+                message: '评论内容和目标ID不能为空'
+            });
         }
 
-        if (!target) {
-            return res.status(404).json({ message: '评论目标不存在' });
-        }
-
-        let rootCommentId = null;
-        // 如果是回复评论，验证父评论是否存在
-        if (parentCommentId) {
-            const parentComment = await Comment.findById(parentCommentId);
-            if (!parentComment) {
-                console.log(chalk.yellow('创建评论失败: 父评论不存在'));
-                return res.status(404).json({ message: '要回复的评论不存在' });
-            }
-
-            // 确保父评论属于同一目标
-            const targetId = articleId || diaryId;
-            // 检查 parentComment.targetId 是否存在
-            if (!parentComment.targetId) {
-                console.log(chalk.yellow('创建评论失败: 父评论缺少目标ID'));
-                return res.status(400).json({ message: '评论数据错误' });
-            }
-
-            if (parentComment.targetId.toString() !== targetId) {
-                console.log(chalk.yellow('创建评论失败: 父评论不属于该文章'));
-                return res.status(400).json({ message: '评论关联错误' });
-            }
-
-            // 如果父评论已经是回复，则使用其父评论作为新评论的父评论
-            if (parentComment.parentComment) {
-                const rootComment = await Comment.findById(parentComment.parentComment);
-                if (rootComment) {
-                    console.log(chalk.blue('回复评论的回复，关联到原始评论'));
-                    rootCommentId = rootComment._id;
-                }
-            } else {
-                rootCommentId = parentComment._id;
-            }
-        }
-
+        // 创建评论
         const comment = new Comment({
             content,
-            targetId: articleId || diaryId,
-            targetType: articleId ? 'Article' : 'Diary',
+            targetId,
+            targetType,
             author: req.user._id,
-            parentComment: rootCommentId || parentCommentId || null
+            parentComment: parentCommentId || null
         });
 
         await comment.save();
+        await comment.populate('author', 'username avatar');
 
-        // 更新目标的评论数组
-        await targetModel.findByIdAndUpdate(
-            articleId || diaryId,
-            { $push: { comments: comment._id } }
-        );
+        const responseData = {
+            _id: comment._id,
+            content: comment.content,
+            author: comment.author,
+            createdAt: comment.createdAt,
+            likes: 0,
+            isLiked: false
+        };
 
-        // 获取完整的评论结构
-        const fullComment = await Comment.findById(comment._id)
-            .populate('author', 'username avatar')
-            .populate({
-                path: 'parentComment',
-                populate: {
-                    path: 'author',
-                    select: 'username avatar'
-                }
-            });
-
-        // 如果是回复，则获取完整的评论树结构
-        let responseData;
-        if (rootCommentId || parentCommentId) {
-            // 获取根评论及其所有回复
-            const rootComment = await Comment.findById(rootCommentId || parentCommentId)
-                .populate('author', 'username avatar')
-                .populate({
-                    path: 'parentComment',
-                    populate: { path: 'author', select: 'username avatar' }
-                });
-
-            const replies = await Comment.find({
-                targetId: articleId || diaryId,
-                parentComment: rootComment._id
-            })
-                .populate('author', 'username avatar')
-                .populate({
-                    path: 'parentComment',
-                    populate: { path: 'author', select: 'username avatar' }
-                })
-                .sort({ createdAt: 1 });
-
-            responseData = {
-                ...rootComment.toObject(),
-                replies: replies.map(reply => ({
-                    ...reply.toObject(),
-                    replyTo: reply.parentComment._id.toString() === rootComment._id.toString()
-                        ? rootComment
-                        : reply.parentComment
-                }))
-            };
-        } else {
-            // 如果是主评论，直接返回新创建的评论
-            responseData = {
-                ...fullComment.toObject(),
-                replies: []
-            };
-        }
-
-        console.log(chalk.green('评论创建成功:', comment._id));
-
-        // 创建评论后，发送通知
-        // 新创建一个评论者对象数据，给通知使用
-        const newComment = {
-            ...comment.toObject(),
-            author: {
-                _id: req.user._id,
-                username: req.user.username,
-                avatar: req.user.avatar
-            }
-        }
+        // 处理通知
         if (parentCommentId) {
             const parentComment = await Comment.findById(parentCommentId)
                 .populate('author', 'username avatar');
-            await createReplyNotification(newComment, parentComment);
+            await createReplyNotification(comment, parentComment);
         } else {
-            const article = await Article.findById(articleId)
-                .populate('author', 'username avatar');
-
-            if (article.author._id.toString() !== req.user._id.toString()) {
-                await createCommentNotification(newComment, article);
-            }
+            await handleCommentNotification(comment, targetId, targetType, req.user._id);
         }
 
         res.status(201).json({
-            message: '评论创建成功',
-            comment: responseData
+            code: SUCCESS.OK,
+            data: responseData,
+            message: '评论创建成功'
         });
     } catch (error) {
         console.error('创建评论错误:', error);
-        res.status(500).json({ message: '创建评论失败' });
+        res.status(500).json(error(SERVER_ERROR.INTERNAL_ERROR, '评论失败'));
     }
 };
 

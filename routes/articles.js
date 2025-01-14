@@ -7,6 +7,9 @@ const authorOnly = require('../middleware/authorOnly');
 // 获取文章列表（公开）
 router.get('/', articleController.getArticles);
 
+// 获取收藏的文章（需要登录）
+router.get('/collected', articleController.getArticles);
+
 // 获取文章归档
 router.get('/archives', articleController.getArticleArchives);
 

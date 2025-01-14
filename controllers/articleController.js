@@ -60,7 +60,7 @@ exports.createArticle = async (req, res) => {
 // 获取所有文章
 exports.getArticles = async (req, res) => {
     try {
-        const { page = 1, limit = 10, category, tag } = req.query;
+        const { page = 1, limit = 10, category, tag, type } = req.query;
         const skip = (page - 1) * limit;
 
         // 构建查询条件
@@ -68,10 +68,49 @@ exports.getArticles = async (req, res) => {
         if (category) query.category = category;
         if (tag) query.tags = tag;
 
+        // 如果是查询收藏的文章，必须是已登录状态
+        let userId;
+        if (type === 'collected') {
+            // 从请求头获取token并解析用户信息
+            const authHeader = req.header('Authorization');
+            if (authHeader) {
+                try {
+                    const token = authHeader.replace('Bearer ', '');
+                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                    const user = await User.findById(decoded.userId);
+                    if (user) {
+                        userId = user._id;
+                        console.log(chalk.blue('文章收藏 - 已登录用户:', userId));
+                    }
+                } catch (err) {
+                    console.log(chalk.yellow('Token验证失败:', err.message));
+                    return res.status(401).json(
+                        error(CLIENT_ERROR.UNAUTHORIZED, '请先登录')
+                    );
+                }
+            }
+
+            // 查询用户收藏的文章
+            query.collections = userId;
+        }
+        console.log(chalk.blue('查询用户收藏的文章:', type, query.collections, userId));
+
         // 获取总文章数
         const total = await Article.countDocuments(query);
 
         const articles = await Article.find(query)
+            .select({
+                title: 1,
+                content: 1,
+                category: 1,
+                cover: 1,
+                tags: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                likes: 1,
+                collections: 1,
+                comments: 1
+            })
             .populate('author', 'username avatar')
             .populate('category', 'name')
             .populate({
@@ -97,8 +136,35 @@ exports.getArticles = async (req, res) => {
 
         const processedArticles = articles.map(article => {
             const articleObj = article.toObject();
+
+            // 处理富文本内容
+            if (articleObj.content) {
+                const plainText = articleObj.content.replace(/<[^>]+>/g, '');
+                if (plainText.length > 140) {
+                    articleObj.content = plainText.substring(0, 140) + '...';
+                } else {
+                    articleObj.content = plainText;
+                }
+            }
+
             articleObj.likes = article.likes?.length || 0;
+            articleObj.collections = article.collections?.length || 0;
             articleObj.comments = article.comments?.length || 0;
+
+            // 只有已登录用户才添加收藏和点赞标记
+            if (userId) {
+                const userIdStr = userId.toString();
+                articleObj.isCollected = article.collections.some(id =>
+                    id.toString() === userIdStr
+                );
+                articleObj.isLiked = article.likes.some(id =>
+                    id.toString() === userIdStr
+                );
+            } else {
+                articleObj.isCollected = false;
+                articleObj.isLiked = false;
+            }
+
             return articleObj;
         });
 
@@ -123,7 +189,7 @@ exports.getArticles = async (req, res) => {
 exports.getArticle = async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // 从请求头获取token并解析用户信息
         let userId;
         const authHeader = req.header('Authorization');
@@ -141,26 +207,11 @@ exports.getArticle = async (req, res) => {
             }
         }
 
+        // 先获取文章基本信息
         const article = await Article.findById(id)
             .populate('author', 'username avatar')
             .populate('category', 'name')
-            .populate({
-                path: 'comments',
-                populate: [
-                    {
-                        path: 'author',
-                        select: 'username avatar'
-                    },
-                    {
-                        path: 'parentComment',
-                        populate: {
-                            path: 'author',
-                            select: 'username avatar'
-                        }
-                    }
-                ],
-                options: { sort: { createdAt: -1 } }
-            });
+            .lean();
 
         if (!article) {
             return res.status(404).json(
@@ -168,48 +219,75 @@ exports.getArticle = async (req, res) => {
             );
         }
 
-        // 转换为普通对象以便修改
-        const articleObj = article.toObject();
+        // 获取文章的评论列表
+        const comments = await Comment.find({
+            targetId: id,
+            targetType: 'Article',
+            parentComment: null
+        })
+            .populate('author', 'username avatar')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        // 获取评论的回复
+        const replies = await Comment.find({
+            targetId: id,
+            targetType: 'Article',
+            parentComment: { $ne: null }
+        })
+            .populate('author', 'username avatar')
+            .populate({
+                path: 'parentComment',
+                select: 'author content',
+                populate: { path: 'author', select: 'username avatar' }
+            })
+            .sort({ createdAt: 1 })
+            .lean();
 
         // 处理点赞和收藏
-        articleObj.likes = article.likes?.length || 0;  // 点赞数
-        articleObj.collections = article.collections?.length || 0;  // 收藏数
-
         if (userId) {
             const userIdStr = userId.toString();
-            articleObj.isLiked = article.likes.some(id => id.toString() === userIdStr);
-            articleObj.isCollected = article.collections.some(id => id.toString() === userIdStr);
-            
-            // 调试日志
-            console.log('用户ID (string):', userIdStr);
-            console.log('点赞数组 (string):', article.likes.map(id => id.toString()));
-            console.log('是否点赞:', articleObj.isLiked);
+            article.isLiked = Array.isArray(article.likes) && article.likes.some(id => id.toString() === userIdStr);
+            article.isCollected = Array.isArray(article.collections) && article.collections.some(id => id.toString() === userIdStr);
         } else {
-            articleObj.isLiked = false;
-            articleObj.isCollected = false;
-            console.log(chalk.yellow('文章详情 - 未登录用户访问'));
+            article.isLiked = false;
+            article.isCollected = false;
         }
 
+        // 处理数量统计 - 移到状态处理后
+        article.likes = Array.isArray(article.likes) ? article.likes.length : 0;
+        article.collections = Array.isArray(article.collections) ? article.collections.length : 0;
+
         // 处理评论数据
-        if (articleObj.comments) {
-            const processedComments = articleObj.comments.map(comment => {
-                const commentObj = comment;
-                if (userId) {
-                    const userIdStr = userId.toString();
-                    commentObj.isLiked = comment.likes.some(id => id.toString() === userIdStr);
-                } else {
-                    commentObj.isLiked = false;
-                }
-                commentObj.likes = comment.likes.length;
-                return commentObj;
+        const processedComments = comments.map(comment => {
+            // 获取该评论的所有回复
+            const commentReplies = replies.filter(reply =>
+                reply.parentComment._id.toString() === comment._id.toString()
+            ).map(reply => {
+                const processedReply = {
+                    ...reply,
+                    likes: reply.likes?.length || 0,
+                    isLiked: userId ? (Array.isArray(reply.likes) && reply.likes.some(id => id.toString() === userId)) : false
+                };
+                const { author, content, _id } = reply.parentComment;
+                processedReply.replyTo = { author, content, _id };
+                return processedReply;
             });
-            articleObj.comments = processedComments;
-        }
+
+            return {
+                ...comment,
+                likes: comment.likes?.length || 0,
+                isLiked: userId ? (Array.isArray(comment.likes) && comment.likes.some(id => id.toString() === userId)) : false,
+                replies: commentReplies
+            };
+        });
+
+        article.comments = processedComments;
 
         // 更新阅读量
         await Article.findByIdAndUpdate(id, { $inc: { views: 1 } });
 
-        res.json(success(articleObj));
+        res.json(success(article));
     } catch (err) {
         console.error(chalk.red('获取文章详情错误:'), err);
         res.status(500).json(
@@ -258,11 +336,11 @@ exports.deleteArticle = async (req, res) => {
         }
 
         await article.deleteOne();
-        res.json({ 
+        res.json({
             code: SUCCESS.OK,
-            data: null, 
+            data: null,
             message: '文章删除成功'
-         });
+        });
     } catch (error) {
         console.error('删除文章错误:', error);
         res.status(500).json({ message: '删除文章失败' });
@@ -431,7 +509,7 @@ exports.toggleLike = async (req, res) => {
         if (index === -1) {
             // 添加点赞
             article.likes.push(req.user._id);
-            
+
             // 只有在点赞时且不是自己的文章时才创建通知
             if (article.author._id.toString() !== req.user._id.toString()) {
                 try {
@@ -464,14 +542,14 @@ exports.getArticleArchives = async (req, res) => {
         const { type = 'date' } = req.query; // date, tag, category
 
         console.log(chalk.blue('获取文章归档请求参数:', type));
-        
+
         // 获取所有已发布的文章
         const articles = await Article.find({ status: 'published' })
             .select('title createdAt tags category likes comments')
             .sort({ createdAt: -1 });
-        
+
         let archiveData = {};
-        
+
         switch (type) {
             case 'date':
                 // 按年月分组
@@ -479,14 +557,14 @@ exports.getArticleArchives = async (req, res) => {
                     const date = new Date(article.createdAt);
                     const year = date.getFullYear();
                     const month = date.getMonth() + 1;
-                    
+
                     if (!archiveData[year]) {
                         archiveData[year] = {};
                     }
                     if (!archiveData[year][month]) {
                         archiveData[year][month] = [];
                     }
-                    
+
                     archiveData[year][month].push({
                         _id: article._id,
                         title: article.title,
@@ -495,7 +573,7 @@ exports.getArticleArchives = async (req, res) => {
                         comments: article.comments.length
                     });
                 });
-                
+
                 // 转换为前端需要的格式
                 archiveData = Object.entries(archiveData)
                     .sort(([yearA], [yearB]) => Number(yearB) - Number(yearA))
@@ -509,7 +587,7 @@ exports.getArticleArchives = async (req, res) => {
                         }))
                     }));
                 break;
-                
+
             case 'tag':
                 // 按标签分组
                 const tagMap = new Map();
@@ -527,7 +605,7 @@ exports.getArticleArchives = async (req, res) => {
                         });
                     });
                 });
-                
+
                 archiveData = Array.from(tagMap.entries())
                     .map(([tag, articles]) => ({
                         tag,
@@ -536,14 +614,14 @@ exports.getArticleArchives = async (req, res) => {
                     }))
                     .sort((a, b) => b.count - a.count);
                 break;
-                
+
             case 'category':
                 // 按分类分组
                 const categoryMap = new Map()
-                
+
                 // 先获取所有文章的分类ID
                 const categoryIds = [...new Set(articles.map(article => article.category))]
-                
+
                 // 查询所有相关的分类信息
                 const categories = await Category.find({
                     _id: { $in: categoryIds }
@@ -580,7 +658,7 @@ exports.getArticleArchives = async (req, res) => {
                     .sort((a, b) => b.count - a.count)
                 break
         }
-        
+
         res.json(success({
             type,
             archives: archiveData,
@@ -598,22 +676,22 @@ exports.getArticleArchives = async (req, res) => {
 exports.toggleCollect = async (req, res) => {
     try {
         const article = await Article.findById(req.params.id);
-        
+
         if (!article) {
             return res.status(404).json(
                 error(CLIENT_ERROR.NOT_FOUND, '文章不存在')
             );
         }
-        
+
         // 检查用户是否已收藏
         const index = article.collections.indexOf(req.user._id);
         const newIsCollected = index === -1; // 如果之前没有收藏，现在就是已收藏状态
-        
+
         if (newIsCollected) {
             // 添加收藏
             article.collections.push(req.user._id);
             console.log(chalk.green(`用户 ${req.user.username} 收藏了文章 ${article.title}`));
-            
+
             // 创建收藏通知（如果收藏者不是作者本人）
             if (article.author.toString() !== req.user._id.toString()) {
                 await createArticleCollectNotification(article, req.user._id);
@@ -622,7 +700,7 @@ exports.toggleCollect = async (req, res) => {
             // 取消收藏
             article.collections.splice(index, 1);
             console.log(chalk.yellow(`用户 ${req.user.username} 取消收藏了文章 ${article.title}`));
-            
+
             // 删除收藏通知
             await Notification.deleteOne({
                 recipient: article.author,
@@ -631,9 +709,9 @@ exports.toggleCollect = async (req, res) => {
                 action: 'article_collect'
             });
         }
-        
+
         await article.save();
-        
+
         res.json(success({
             collections: article.collections.length,
             isCollected: newIsCollected  // 返回新的收藏状态
