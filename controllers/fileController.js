@@ -5,9 +5,7 @@ const chalk = require('chalk');
 const { SUCCESS, CLIENT_ERROR, SERVER_ERROR } = require('../constants/httpStatus');
 
 // 从环境变量获取 API 基础路径
-const API_BASE = process.env.NODE_ENV === 'development' 
-    ? process.env.API_BASE_DEV 
-    : process.env.API_BASE_PROD;
+const API_BASE = process.env.API_BASE;
 
 // 上传文件
 exports.uploadFile = async (req, res) => {

@@ -6,15 +6,10 @@ const connectDB = async () => {
         // 打印连接信息
         console.log(chalk.blue('正在连接数据库...'));
         console.log(chalk.blue(`环境: ${process.env.NODE_ENV}`));
-        console.log(chalk.blue(`URI: ${process.env.NODE_ENV === 'production' 
-            ? process.env.MONGODB_URI_PROD 
-            : process.env.MONGODB_URI_DEV}`
-        ));
+        console.log(chalk.blue(`URI: ${process.env.MONGODB_URI}`));
 
         // 根据环境选择数据库 URI
-        const MONGODB_URI = process.env.NODE_ENV === 'production' 
-            ? process.env.MONGODB_URI_PROD 
-            : process.env.MONGODB_URI_DEV;
+        const MONGODB_URI = process.env.MONGODB_URI;
 
         await mongoose.connect(MONGODB_URI, {
             useNewUrlParser: true,

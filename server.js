@@ -1,11 +1,14 @@
-require('dotenv').config();
+// 根据环境加载对应的配置文件
+require('dotenv').config({
+    path: process.env.NODE_ENV === 'production' 
+        ? '.env.production' 
+        : '.env.development'
+});
 
 // 打印环境变量用于调试
 console.log('当前环境:', process.env.NODE_ENV);
-console.log('MongoDB URI:', process.env.NODE_ENV === 'production' 
-    ? process.env.MONGODB_URI_PROD 
-    : process.env.MONGODB_URI_DEV
-);
+console.log('MongoDB URI:', process.env.MONGODB_URI);
+console.log('API Base:', process.env.API_BASE);
 
 const express = require('express');
 const cors = require('cors');
@@ -40,9 +43,7 @@ app.use(session({
 connectDB();
 
 // API 基础路径
-const API_BASE = process.env.NODE_ENV === 'development' 
-    ? 'http://localhost:5000/api'
-    : 'http://159.75.125.36:5000/api';
+const API_BASE = process.env.API_BASE
 
 // 跨域配置
 app.use((req, res, next) => {
