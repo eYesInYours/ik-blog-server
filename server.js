@@ -47,17 +47,18 @@ const API_BASE = process.env.NODE_ENV === 'development'
 // 跨域配置
 app.use((req, res, next) => {
     // 允许特定域名访问
-    const allowedOrigins = [
-        'http://localhost:3010',
-        'http://localhost:3333',
-        'http://159.75.125.36:3010',
-        'http://159.75.125.36:3333'
-    ];
-    const origin = req.headers.origin;
-    if (allowedOrigins.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
-    }
-
+    // const allowedOrigins = [
+    //     'http://localhost:3010',
+    //     'http://localhost:3333',
+    //     'http://159.75.125.36:3010',
+    //     'http://159.75.125.36:3333',
+    //     'https://restapi.amap.com'
+    // ];
+    // const origin = req.headers.origin;
+    // if (allowedOrigins.includes(origin)) {
+    // }
+    
+    res.header('Access-Control-Allow-Origin', '*');
     // 允许携带认证信息
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', '*');
