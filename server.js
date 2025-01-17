@@ -20,6 +20,7 @@ const multer = require('multer');
 const visitLogger = require('./middleware/visitLogger');
 const { SERVER_ERROR, CLIENT_ERROR } = require('./constants/httpStatus');
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
 
 // 确保 uploads 目录存在
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -31,16 +32,20 @@ if (!fs.existsSync(uploadsDir)) {
 // 初始化 Express 应用
 const app = express();
 
-// session 中间件配置 - 放在跨域配置之前
+// session 中间件配置
 app.use(session({
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,  // 改为 false，避免创建空的 session
+    store: MongoStore.create({
+        mongoUrl: process.env.MONGODB_URI,
+        ttl: 5 * 60, // session 过期时间：5分钟
+    }),
     cookie: { 
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 5 * 60 * 1000, // 5分钟过期
+        maxAge: 5 * 60 * 1000,
         httpOnly: true,
-        sameSite: 'lax'  // 允许跨站点请求
+        sameSite: 'lax'
     }
 }));
 
