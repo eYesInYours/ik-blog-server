@@ -31,14 +31,16 @@ if (!fs.existsSync(uploadsDir)) {
 // 初始化 Express 应用
 const app = express();
 
-// session 中间件配置 - 放在其他中间件之前
+// session 中间件配置 - 放在跨域配置之前
 app.use(session({
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
     saveUninitialized: true,
     cookie: { 
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 5 * 60 * 1000 // 5分钟过期
+        maxAge: 5 * 60 * 1000, // 5分钟过期
+        httpOnly: true,
+        sameSite: 'lax'  // 允许跨站点请求
     }
 }));
 
@@ -50,25 +52,24 @@ const API_BASE = process.env.API_BASE
 
 // 跨域配置
 app.use((req, res, next) => {
-    // 允许特定域名访问
-    // const allowedOrigins = [
-    //     'http://localhost:3010',
-    //     'http://localhost:3333',
-    //     'http://159.75.125.36:3010',
-    //     'http://159.75.125.36:3333',
-    //     'https://restapi.amap.com'
-    // ];
-    // const origin = req.headers.origin;
-    // if (allowedOrigins.includes(origin)) {
-    // }
+    const allowedOrigins = [
+        'http://localhost:3333',
+        'http://localhost:3010',
+        'http://159.75.125.36:3333',
+        'http://159.75.125.36:3010',
+    ];
+    const origin = req.headers.origin;
     
-    res.header('Access-Control-Allow-Origin', '*');
+    // 设置允许的源
+    if (allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
+    
     // 允许携带认证信息
     res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', '*');
+    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
-    // 处理 OPTIONS 请求
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
