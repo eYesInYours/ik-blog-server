@@ -16,21 +16,31 @@ exports.getCaptcha = (req, res) => {
             fontSize: 40       // 字体大小
         });
 
-        // 将验证码文本存储到会话中，用于后续验证
+        // 将验证码文本存储到会话中
         req.session.captcha = captcha.text.toLowerCase();
-
-        // 将SVG转换为base64
-        const base64Image = Buffer.from(captcha.data).toString('base64');
-        const imageUrl = `data:image/svg+xml;base64,${base64Image}`;
         
-        res.json(success({
-            imageUrl
-        }, '验证码生成成功'));
+        // 打印调试信息
+        console.log('生成验证码:', req.session.captcha);
+        console.log('Session ID:', req.sessionID);
+        console.log('完整的 Session:', req.session);
+
+        // 确保 session 被保存
+        req.session.save((err) => {
+            if (err) {
+                console.error('Session 保存错误:', err);
+                return res.status(500).json(error(SERVER_ERROR.INTERNAL_ERROR, '验证码生成失败'));
+            }
+
+            const base64Image = Buffer.from(captcha.data).toString('base64');
+            const imageUrl = `data:image/svg+xml;base64,${base64Image}`;
+            
+            res.json(success({
+                imageUrl
+            }, '验证码生成成功'));
+        });
     } catch (err) {
         console.error('生成验证码错误:', err);
-        res.status(500).json(
-            error(SERVER_ERROR.INTERNAL_ERROR, '生成验证码失败')
-        );
+        res.status(500).json(error(SERVER_ERROR.INTERNAL_ERROR, '生成验证码失败'));
     }
 };
 
@@ -40,6 +50,8 @@ exports.verifyCaptcha = (req, res) => {
         const captchaText = typeof req.body === 'string' ? req.body : req.body.code;
         console.log('收到的验证码:', captchaText);
         console.log('会话中的验证码:', req.session.captcha);
+        console.log('Session ID:', req.sessionID);
+        console.log('完整的 Session:', req.session);
 
         // 检查会话中是否有验证码
         if (!req.session.captcha) {
@@ -69,9 +81,6 @@ exports.verifyCaptcha = (req, res) => {
         });
     } catch (err) {
         console.error('验证码验证错误:', err);
-        res.status(500).json({
-            code: 500,
-            message: '验证码验证失败'
-        });
+        res.status(500).json(error(SERVER_ERROR.INTERNAL_ERROR, '验证码验证失败'));
     }
 }; 

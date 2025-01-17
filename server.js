@@ -36,16 +36,17 @@ const app = express();
 app.use(session({
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
-    saveUninitialized: false,  // 改为 false，避免创建空的 session
+    saveUninitialized: false,
     store: MongoStore.create({
         mongoUrl: process.env.MONGODB_URI,
-        ttl: 5 * 60, // session 过期时间：5分钟
+        ttl: 5 * 60
     }),
     cookie: { 
-        secure: process.env.NODE_ENV === 'production',
+        secure: false,  // 必须是 false，除非使用 https
         maxAge: 5 * 60 * 1000,
         httpOnly: true,
-        sameSite: 'lax'
+        sameSite: 'lax',  // 改回 lax
+        domain: process.env.NODE_ENV === 'production' ? '159.75.125.36' : 'localhost'  // 添加 domain
     }
 }));
 
@@ -61,19 +62,16 @@ app.use((req, res, next) => {
         'http://localhost:3333',
         'http://localhost:3010',
         'http://159.75.125.36:3333',
-        'http://159.75.125.36:3010',
+        'http://159.75.125.36:3010'
     ];
     const origin = req.headers.origin;
     
-    // 设置允许的源
     if (allowedOrigins.includes(origin)) {
         res.header('Access-Control-Allow-Origin', origin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+        res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
     }
-    
-    // 允许携带认证信息
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
