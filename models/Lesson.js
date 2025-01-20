@@ -6,6 +6,12 @@ const lessonSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    // 课程类型: private-一对一, group-班课
+    type: {
+        type: String,
+        enum: ['private', 'group'],
+        required: true
+    },
     // 总课时数(分钟)
     totalMinutes: {
         type: Number,
@@ -33,12 +39,12 @@ const lessonSchema = new mongoose.Schema({
     // 课程描述
     description: {
         type: String,
-        required: true
+        required: false
     },
     // 课程封面
     cover: {
         type: String,
-        required: true
+        required: false
     },
     // 状态: active-启用, inactive-禁用
     status: {

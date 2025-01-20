@@ -102,6 +102,7 @@ apiRouter.use('/categories', require('./routes/categories'));
 apiRouter.use('/diaries', require('./routes/diary'));
 apiRouter.use('/notifications', require('./routes/notifications'));
 apiRouter.use('/lessons', require('./routes/lesson'));
+apiRouter.use('/students', require('./routes/student'));
 // 挂载 API 路由到 /api 路径
 app.use('/api', apiRouter);
 
