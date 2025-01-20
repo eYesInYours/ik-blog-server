@@ -20,6 +20,7 @@ const multer = require('multer');
 const visitLogger = require('./middleware/visitLogger');
 const { SERVER_ERROR, CLIENT_ERROR } = require('./constants/httpStatus');
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
 
 // 确保 uploads 目录存在
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -31,12 +32,22 @@ if (!fs.existsSync(uploadsDir)) {
 // 初始化 Express 应用
 const app = express();
 
-// session 中间件配置 - 放在其他中间件之前
+// session 中间件配置
 app.use(session({
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
-    saveUninitialized: true,
-    cookie: { secure: process.env.NODE_ENV === 'production' }
+    saveUninitialized: false,
+    store: MongoStore.create({
+        mongoUrl: process.env.MONGODB_URI,
+        ttl: 5 * 60
+    }),
+    cookie: { 
+        secure: false,  // 必须是 false，除非使用 https
+        maxAge: 5 * 60 * 1000,
+        httpOnly: true,
+        sameSite: 'lax',  // 改回 lax
+        domain: process.env.NODE_ENV === 'production' ? '159.75.125.36' : 'localhost'  // 添加 domain
+    }
 }));
 
 // 连接数据库
@@ -47,25 +58,21 @@ const API_BASE = process.env.API_BASE
 
 // 跨域配置
 app.use((req, res, next) => {
-    // 允许特定域名访问
-    // const allowedOrigins = [
-    //     'http://localhost:3010',
-    //     'http://localhost:3333',
-    //     'http://159.75.125.36:3010',
-    //     'http://159.75.125.36:3333',
-    //     'https://restapi.amap.com'
-    // ];
-    // const origin = req.headers.origin;
-    // if (allowedOrigins.includes(origin)) {
-    // }
+    const allowedOrigins = [
+        'http://localhost:3333',
+        'http://localhost:3010',
+        'http://159.75.125.36:3333',
+        'http://159.75.125.36:3010'
+    ];
+    const origin = req.headers.origin;
     
-    res.header('Access-Control-Allow-Origin', '*');
-    // 允许携带认证信息
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', '*');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+        res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    }
 
-    // 处理 OPTIONS 请求
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
