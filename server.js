@@ -11,6 +11,7 @@ console.log('MongoDB URI:', process.env.MONGODB_URI);
 console.log('API Base:', process.env.API_BASE);
 
 const express = require('express');
+const mongoose = require('mongoose');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const chalk = require('chalk');
@@ -32,61 +33,40 @@ if (!fs.existsSync(uploadsDir)) {
 // 初始化 Express 应用
 const app = express();
 
-// session 中间件配置
+// Session 配置
 app.use(session({
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
-    saveUninitialized: false,
+    saveUninitialized: true,
     store: MongoStore.create({
         mongoUrl: process.env.MONGODB_URI,
-        ttl: 5 * 60
+        ttl: 5 * 60 // 5分钟过期
     }),
-    cookie: { 
-        secure: false,  // 必须是 false，除非使用 https
-        maxAge: 5 * 60 * 1000,
+    cookie: {
         httpOnly: true,
-        sameSite: 'lax',  // 改回 lax
-        domain: process.env.NODE_ENV === 'production' ? '159.75.125.36' : 'localhost'  // 添加 domain
+        secure: false,
+        maxAge: 5 * 60 * 1000, // 5分钟
+        sameSite: 'lax'
     }
 }));
 
-// 连接数据库
-connectDB();
+// CORS 配置
+app.use(cors({
+    origin: true, // 允许所有来源
+    credentials: true, // 允许携带凭证
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
-// API 基础路径
-const API_BASE = process.env.API_BASE
-
-// 跨域配置
-app.use((req, res, next) => {
-    const allowedOrigins = [
-        'http://localhost:3333',
-        'http://localhost:3010',
-        'http://159.75.125.36:3333',
-        'http://159.75.125.36:3010'
-    ];
-    const origin = req.headers.origin;
-    
-    if (allowedOrigins.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Access-Control-Allow-Credentials', 'true');
-        res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    }
-
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
-
+// 中间件
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 访问记录中间件
+// 访问日志中间件
 app.use(visitLogger);
 
 // 静态文件服务
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // API 路由
 const apiRouter = express.Router();
@@ -124,7 +104,11 @@ app.use((err, req, res, next) => {
     });
 });
 
+// 连接数据库
+connectDB();
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(chalk.green(`服务器运行在端口 ${PORT}`));
+    console.log(chalk.blue(`环境: ${process.env.NODE_ENV}`));
 }); 
