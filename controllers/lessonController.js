@@ -7,41 +7,50 @@ const mongoose = require('mongoose');
 // 获取课程列表
 exports.getLessons = async (req, res) => {
     try {
-        const { page = 1, limit = 10, keyword, status } = req.query;
+        const { page = 1, limit = 10, keyword, type, stage, status } = req.query;
         const query = {};
 
-        // 构建查询条件
         if (keyword) {
             query.$or = [
                 { name: new RegExp(keyword, 'i') },
                 { description: new RegExp(keyword, 'i') }
             ];
         }
+
+        if (type) {
+            query.type = type;
+        }
+
+        if (stage) {
+            query.stage = stage;
+        }
+
         if (status) {
             query.status = status;
         }
 
-        const total = await Lesson.countDocuments(query);
         const lessons = await Lesson.find(query)
-            .sort({ createdAt: -1 })
+            .sort({ sort: 1, createdAt: -1 }) // 先按sort排序，再按创建时间倒序
             .skip((page - 1) * limit)
-            .limit(Number(limit));
+            .limit(parseInt(limit));
+
+        const total = await Lesson.countDocuments(query);
 
         res.json({
-            code: SUCCESS.OK,
+            code: 200,
             data: {
                 lessons,
                 pagination: {
                     total,
-                    page: Number(page),
-                    limit: Number(limit)
+                    page: parseInt(page),
+                    limit: parseInt(limit)
                 }
             }
         });
     } catch (error) {
-        console.error(chalk.red('获取课程列表错误:'), error);
-        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-            code: SERVER_ERROR.INTERNAL_ERROR,
+        console.error('获取课程列表失败:', error);
+        res.status(500).json({
+            code: 500,
             message: '获取课程列表失败'
         });
     }
@@ -251,3 +260,46 @@ exports.getLessonStudents = async (req, res) => {
         });
     }
 };
+
+// 更新课程排序
+exports.updateSort = async (req, res) => {
+    try {
+        const { id, targetId, type } = req.body
+        
+        // 获取当前课程和目标课程的排序值
+        const currentLesson = await Lesson.findById(id)
+        const targetLesson = await Lesson.findById(targetId)
+        
+        if (!currentLesson || !targetLesson) {
+            return res.status(404).json({
+                code: 404,
+                message: '课程不存在'
+            })
+        }
+        
+        // 计算新的排序值
+        const newSort = type === 'after' 
+            ? targetLesson.sort + 1 
+            : targetLesson.sort - 1
+        
+        // 更新排序值
+        await Lesson.findByIdAndUpdate(id, { sort: newSort })
+        
+        // 重新排序所有课程，确保排序值连续
+        const lessons = await Lesson.find().sort('sort')
+        for (let i = 0; i < lessons.length; i++) {
+            await Lesson.findByIdAndUpdate(lessons[i]._id, { sort: i + 1 })
+        }
+        
+        res.json({
+            code: 200,
+            message: '排序更新成功'
+        })
+    } catch (error) {
+        console.error('更新排序失败:', error)
+        res.status(500).json({
+            code: 500,
+            message: '更新排序失败'
+        })
+    }
+}

@@ -9,8 +9,15 @@ const moment = require('moment');
 // 获取学员列表
 exports.getStudents = async (req, res) => {
     try {
-        const { page = 1, limit = 10, keyword, status } = req.query;
+        const { page = 1, limit = 10, keyword, status, deleted } = req.query;
+
+        // 构建查询条件
         const query = {};
+        
+        // 处理删除状态查询
+        if (deleted !== undefined) {
+            query.deleted = deleted === 'true';
+        }
 
         if (keyword) {
             query.$or = [
@@ -52,43 +59,38 @@ exports.getStudents = async (req, res) => {
 // 创建学员
 exports.createStudent = async (req, res) => {
     try {
-        const { name, phone, email, lessonId, remark } = req.body;
+        const { name, phone, email, remark } = req.body;
 
-        // 获取课程信息
-        const lesson = await Lesson.findById(lessonId);
-        if (!lesson) {
-            return res.status(CLIENT_ERROR.NOT_FOUND).json({
-                code: CLIENT_ERROR.NOT_FOUND,
-                message: '课程不存在'
+        // 验证手机号是否已存在
+        const existingStudent = await Student.findOne({ phone, deleted: false });
+        if (existingStudent) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '该手机号已被注册'
             });
         }
 
-        const student = new Student({
+        // 创建学员
+        const student = await Student.create({
             name,
             phone,
             email,
-            lessonId,
-            totalSessions: lesson.totalSessions, // 使用课程设置的总课时
-            remainingSessions: lesson.totalSessions, // 初始剩余课时等于总课时
-            remark
+            remark,
+            balance: 0,
+            status: 'active'
         });
 
-        await student.save();
-
-        // 返回带课程信息的学员数据
-        const populatedStudent = await Student.findById(student._id)
-            .populate('lessonId', 'name type');
-
-        res.json({
+        // 直接返回创建的学员数据，不需要populate
+        res.status(SUCCESS.OK).json({
             code: SUCCESS.OK,
-            message: '学员创建成功',
-            data: populatedStudent
+            data: student,
+            message: '创建成功'
         });
     } catch (error) {
-        console.error(chalk.red('创建学员错误:'), error);
+        console.error('创建学员失败:', error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             code: SERVER_ERROR.INTERNAL_ERROR,
-            message: '创建学员失败'
+            message: error.message || '创建学员失败'
         });
     }
 };
@@ -235,58 +237,67 @@ exports.recharge = async (req, res) => {
     }
 };
 
-// 更新学员信息
+// 更新学员
 exports.updateStudent = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { name, phone, email, remark } = req.body;
+        const { id } = req.params
+        const { name, phone, email, remark } = req.body
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(CLIENT_ERROR.BAD_REQUEST).json({
                 code: CLIENT_ERROR.BAD_REQUEST,
                 message: '无效的学员ID'
-            });
+            })
         }
 
-        const student = await Student.findById(id);
+        // 检查手机号是否被其他学员使用
+        const existingStudent = await Student.findOne({
+            phone,
+            _id: { $ne: id },
+            deleted: false
+        })
+        if (existingStudent) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '该手机号已被其他学员使用'
+            })
+        }
+
+        // 更新学员信息
+        const student = await Student.findByIdAndUpdate(
+            id,
+            {
+                name,
+                phone,
+                email,
+                remark
+            },
+            { new: true } // 返回更新后的文档
+        )
+
         if (!student) {
             return res.status(CLIENT_ERROR.NOT_FOUND).json({
                 code: CLIENT_ERROR.NOT_FOUND,
                 message: '学员不存在'
-            });
+            })
         }
-
-        // 更新基本信息
-        student.name = name;
-        student.phone = phone;
-        student.email = email;
-        student.remark = remark;
-
-        await student.save();
-
-        // 返回更新后的学员信息（包含课程信息）
-        const updatedStudent = await Student.findById(id)
-            .populate('lessonId', 'name type');
 
         res.json({
             code: SUCCESS.OK,
-            message: '更新成功',
-            data: updatedStudent
-        });
+            data: student,
+            message: '更新成功'
+        })
     } catch (error) {
-        console.error(chalk.red('更新学员错误:'), error);
+        console.error('更新学员失败:', error)
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             code: SERVER_ERROR.INTERNAL_ERROR,
             message: '更新学员失败'
-        });
+        })
     }
-};
+}
 
-// 删除学员
+// 软删除学员
 exports.deleteStudent = async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
         const { id } = req.params;
 
@@ -297,41 +308,18 @@ exports.deleteStudent = async (req, res) => {
             });
         }
 
-        // 检查学员是否存在
-        const student = await Student.findById(id);
-        if (!student) {
-            return res.status(CLIENT_ERROR.NOT_FOUND).json({
-                code: CLIENT_ERROR.NOT_FOUND,
-                message: '学员不存在'
-            });
-        }
-
-        // 检查是否有未完成的课程
-        if (student.remainingSessions > 0) {
-            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
-                code: CLIENT_ERROR.BAD_REQUEST,
-                message: '该学员还有未完成的课程，无法删除'
-            });
-        }
-
-        // 删除相关的所有记录
-        await Record.deleteMany({ studentId: id }, { session });
-
-        // 删除学员
-        await Student.findByIdAndDelete(id, { session });
-
-        await session.commitTransaction();
-        session.endSession();
+        // 软删除，更新deleted字段
+        await Student.findByIdAndUpdate(id, {
+            deleted: true,
+            deletedAt: new Date()
+        });
 
         res.json({
             code: SUCCESS.OK,
             message: '删除成功'
         });
     } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
-
-        console.error(chalk.red('删除学员错误:'), error);
+        console.error('删除学员失败:', error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             code: SERVER_ERROR.INTERNAL_ERROR,
             message: '删除学员失败'
@@ -343,7 +331,7 @@ exports.deleteStudent = async (req, res) => {
 exports.getRecords = async (req, res) => {
     try {
         const { id } = req.params;
-        const { page = 1, limit = 10 } = req.query;
+        const { page = 1, limit = 10, type } = req.query;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(CLIENT_ERROR.BAD_REQUEST).json({
@@ -352,12 +340,28 @@ exports.getRecords = async (req, res) => {
             });
         }
 
-        // 获取所有记录
-        const total = await Record.countDocuments({ studentId: id });
-        const records = await Record.find({ studentId: id })
+        // 检查学员是否存在且未删除
+        const student = await Student.findOne({ _id: id, deleted: false });
+        if (!student) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '学员不存在'
+            });
+        }
+
+        // 构建查询条件
+        const query = { studentId: id }
+        if (type) {
+            query.type = type // 添加类型筛选
+        }
+
+        // 获取记录
+        const total = await Record.countDocuments(query);
+        const records = await Record.find(query)
             .sort({ recordTime: -1 })
             .skip((page - 1) * limit)
-            .limit(Number(limit));
+            .limit(Number(limit))
+            .populate('lessonId', 'name');
 
         res.json({
             code: SUCCESS.OK,
@@ -371,7 +375,7 @@ exports.getRecords = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error(chalk.red('获取记录错误:'), error);
+        console.error('获取记录失败:', error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             code: SERVER_ERROR.INTERNAL_ERROR,
             message: '获取记录失败'
@@ -485,4 +489,63 @@ exports.getAnalysisData = async (req, res) => {
             message: '获取分析数据失败'
         });
     }
-}; 
+};
+
+// 恢复学员
+exports.restoreStudent = async (req, res) => {
+    try {
+        const { id } = req.params
+
+        const student = await Student.findByIdAndUpdate(id, {
+            deleted: false,
+            deletedAt: null
+        })
+
+        if (!student) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '学员不存在'
+            })
+        }
+
+        res.json({
+            code: SUCCESS.OK,
+            message: '恢复成功'
+        })
+    } catch (error) {
+        console.error('恢复学员失败:', error)
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '恢复学员失败'
+        })
+    }
+}
+
+// 彻底删除学员
+exports.permanentDeleteStudent = async (req, res) => {
+    try {
+        const { id } = req.params
+
+        const student = await Student.findByIdAndDelete(id)
+        if (!student) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '学员不存在'
+            })
+        }
+
+        // 删除相关记录
+        await Record.deleteMany({ studentId: id })
+
+        res.json({
+            code: SUCCESS.OK,
+            message: '删除成功'
+        })
+    } catch (error) {
+        console.error('彻底删除学员失败:', error)
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '彻底删除学员失败'
+        })
+    }
+} 

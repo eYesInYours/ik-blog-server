@@ -11,4 +11,5 @@ router.get('/:id', auth, lessonController.getLessonById); // 获取课程详情
 router.put('/:id', auth, authorOnly, lessonController.updateLesson); // 更新课程
 router.delete('/:id', auth, authorOnly, lessonController.deleteLesson); // 删除课程
 router.patch('/:id/status', auth, authorOnly, lessonController.updateLessonStatus); // 更新课程状态
+router.post('/sort', auth, authorOnly, lessonController.updateSort); // 更新课程排序
 module.exports = router;

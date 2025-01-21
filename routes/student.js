@@ -27,4 +27,10 @@ router.get('/:id/attendance', auth, studentController.getRecords);
 // 获取学员分析数据
 router.get('/:studentId/analysis', auth, studentController.getAnalysisData);
 
+// 恢复学员
+router.put('/:id/restore', auth, studentController.restoreStudent)
+
+// 彻底删除学员
+router.delete('/:id/permanent', auth, studentController.permanentDeleteStudent)
+
 module.exports = router; 

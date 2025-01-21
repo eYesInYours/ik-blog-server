@@ -66,7 +66,19 @@ const lessonSchema = new mongoose.Schema({
     isDeleted: {
         type: Boolean,
         default: false
+    },
+    sort: {
+        type: Number,
+        default: 0
+    },
+    stage: {
+        type: String,
+        enum: ['basic', 'intermediate', 'advanced'],
+        default: 'basic',
+        required: true
     }
+}, {
+    timestamps: true
 });
 
 module.exports = mongoose.model('Lesson', lessonSchema);
