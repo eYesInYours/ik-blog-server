@@ -4,6 +4,7 @@ const chalk = require('chalk');
 const mongoose = require('mongoose');
 const Lesson = require('../models/Lesson');
 const Record = require('../models/Record');
+const moment = require('moment');
 
 // 获取学员列表
 exports.getStudents = async (req, res) => {
@@ -24,7 +25,6 @@ exports.getStudents = async (req, res) => {
 
         const total = await Student.countDocuments(query);
         const students = await Student.find(query)
-            .populate('lessonId', 'name type totalSessions minutesPerSession price') // 增加需要的课程字段
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(Number(limit));
@@ -137,9 +137,13 @@ exports.enrollLesson = async (req, res) => {
 // 签到
 exports.attendance = async (req, res) => {
     try {
-        const { studentId, sessions, attendanceTime, remark } = req.body;
+        const { studentId, lessonId, sessions, attendanceTime, remark } = req.body;
 
-        const student = await Student.findById(studentId);
+        const [student, lesson] = await Promise.all([
+            Student.findById(studentId),
+            Lesson.findById(lessonId)
+        ]);
+
         if (!student) {
             return res.status(CLIENT_ERROR.NOT_FOUND).json({
                 code: CLIENT_ERROR.NOT_FOUND,
@@ -147,29 +151,30 @@ exports.attendance = async (req, res) => {
             });
         }
 
-        if (student.remainingSessions < sessions) {
-            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
-                code: CLIENT_ERROR.BAD_REQUEST,
-                message: '剩余课时不足'
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
             });
         }
+
+        // 计算扣除的金额
+        const amount = -(sessions * lesson.price);
 
         // 创建签到记录
         const record = new Record({
             studentId,
-            lessonId: student.lessonId,
+            lessonId,
             type: 'attendance',
-            sessions: -sessions, // 签到为负数
+            sessions: -sessions,
+            amount,
             recordTime: attendanceTime || new Date(),
-            remark // 添加备注字段
+            remark
         });
         await record.save();
 
-        // 更新剩余课时
-        student.remainingSessions -= sessions;
-        if (student.remainingSessions === 0) {
-            student.status = 'inactive';
-        }
+        // 更新学员余额
+        student.balance += amount;
         await student.save();
 
         res.json({
@@ -177,7 +182,7 @@ exports.attendance = async (req, res) => {
             message: '签到成功',
             data: {
                 record,
-                remainingSessions: student.remainingSessions
+                balance: student.balance
             }
         });
     } catch (error) {
@@ -189,10 +194,10 @@ exports.attendance = async (req, res) => {
     }
 };
 
-// 充值课时
+// 充值
 exports.recharge = async (req, res) => {
     try {
-        const { studentId, sessions, remark } = req.body;
+        const { studentId, amount, remark } = req.body;
 
         const student = await Student.findById(studentId);
         if (!student) {
@@ -205,18 +210,15 @@ exports.recharge = async (req, res) => {
         // 创建充值记录
         const record = new Record({
             studentId,
-            lessonId: student.lessonId,
             type: 'recharge',
-            sessions, // 充值为正数
+            amount,
             recordTime: new Date(),
-            remark // 添加备注字段
+            remark
         });
         await record.save();
 
-        // 更新学员课时
-        student.totalSessions += sessions;
-        student.remainingSessions += sessions;
-        student.status = 'active';
+        // 更新学员余额
+        student.balance += amount;
         await student.save();
 
         res.json({
@@ -373,6 +375,114 @@ exports.getRecords = async (req, res) => {
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             code: SERVER_ERROR.INTERNAL_ERROR,
             message: '获取记录失败'
+        });
+    }
+};
+
+// 获取分析数据
+exports.getAnalysisData = async (req, res) => {
+    try {
+        const { studentId } = req.params;
+        const { timeRange = 'month' } = req.query;
+        
+        // 设置时间范围
+        const now = moment();
+        let startTime;
+        let dateFormat;
+        
+        switch (timeRange) {
+            case 'week':
+                startTime = moment().startOf('week');
+                dateFormat = 'MM-DD';
+                break;
+            case 'month':
+                startTime = moment().startOf('month');
+                dateFormat = 'MM-DD';
+                break;
+            case 'year':
+                startTime = moment().startOf('year');
+                dateFormat = 'YYYY-MM';
+                break;
+            default:
+                startTime = moment().startOf('month');
+                dateFormat = 'MM-DD';
+        }
+
+        // 查询该时间段内的所有记录
+        const records = await Record.find({
+            studentId,
+            recordTime: {
+                $gte: startTime.toDate(),
+                $lte: now.toDate()
+            }
+        }).sort('recordTime');
+
+        // 计算充值总额
+        const rechargeRecords = records.filter(r => r.type === 'recharge');
+        const totalRecharge = rechargeRecords.length > 0 
+            ? rechargeRecords.reduce((sum, r) => sum + (r.amount || 0), 0)
+            : 0;
+
+        // 计算消费总额
+        const attendanceRecords = records.filter(r => r.type === 'attendance');
+        const totalConsumption = attendanceRecords.length > 0
+            ? Math.abs(attendanceRecords.reduce((sum, r) => sum + (r.amount || 0), 0))
+            : 0;
+
+        // 计算总课时
+        const totalSessions = attendanceRecords.length > 0
+            ? attendanceRecords.reduce((sum, r) => sum + Math.abs(r.sessions || 0), 0)
+            : 0;
+
+        // 生成日期序列
+        const dates = [];
+        const current = moment(startTime);
+        while (current <= now) {
+            dates.push(current.format(dateFormat));
+            current.add(1, timeRange === 'year' ? 'month' : 'day');
+        }
+
+        // 初始化趋势数据
+        const amountTrend = {
+            dates,
+            recharge: new Array(dates.length).fill(0),
+            consumption: new Array(dates.length).fill(0)
+        };
+
+        const sessionsTrend = {
+            dates,
+            sessions: new Array(dates.length).fill(0)
+        };
+
+        // 填充趋势数据
+        records.forEach(record => {
+            const date = moment(record.recordTime).format(dateFormat);
+            const index = dates.indexOf(date);
+            if (index !== -1) {
+                if (record.type === 'recharge') {
+                    amountTrend.recharge[index] += record.amount || 0;
+                } else if (record.type === 'attendance') {
+                    amountTrend.consumption[index] += Math.abs(record.amount || 0);
+                    sessionsTrend.sessions[index] += Math.abs(record.sessions || 0);
+                }
+            }
+        });
+
+        res.json({
+            code: SUCCESS.OK,
+            data: {
+                totalRecharge,
+                totalConsumption,
+                totalSessions,
+                amountTrend,
+                sessionsTrend
+            }
+        });
+    } catch (error) {
+        console.error(chalk.red('获取分析数据错误:'), error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '获取分析数据失败'
         });
     }
 }; 

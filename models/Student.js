@@ -16,33 +16,11 @@ const studentSchema = new mongoose.Schema({
         type: String,
         required: false
     },
-    // 课程信息
-    lessonId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Lesson',
+    // 账户余额
+    balance: {
+        type: Number,
+        default: 0,
         required: true
-    },
-    // 总课时数
-    totalSessions: {
-        type: Number,
-        required: true,
-        min: 0
-    },
-    // 剩余课时数
-    remainingSessions: {
-        type: Number,
-        required: true,
-        min: 0
-    },
-    // 开始日期
-    startDate: {
-        type: Date,
-        required: false
-    },
-    // 结束日期
-    endDate: {
-        type: Date,
-        required: false
     },
     // 备注
     remark: {
@@ -58,6 +36,8 @@ const studentSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     }
+}, {
+    timestamps: true
 });
 
 module.exports = mongoose.model('Student', studentSchema); 

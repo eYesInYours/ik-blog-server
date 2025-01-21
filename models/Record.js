@@ -7,11 +7,13 @@ const recordSchema = new mongoose.Schema({
         ref: 'Student',
         required: true
     },
-    // 关联课程
+    // 关联课程（签到必填，充值可选）
     lessonId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Lesson',
-        required: true
+        required: function() {
+            return this.type === 'attendance';
+        }
     },
     // 记录类型
     type: {
@@ -19,8 +21,15 @@ const recordSchema = new mongoose.Schema({
         enum: ['attendance', 'recharge'],
         required: true
     },
-    // 课时变动数（签到为负数，充值为正数）
+    // 课时变动数（签到必填，充值可选）
     sessions: {
+        type: Number,
+        required: function() {
+            return this.type === 'attendance';
+        }
+    },
+    // 金额变动
+    amount: {
         type: Number,
         required: true
     },

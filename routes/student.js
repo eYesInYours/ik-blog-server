@@ -24,4 +24,7 @@ router.post('/recharge', auth, authorOnly, studentController.recharge);
 // 获取上课记录
 router.get('/:id/attendance', auth, studentController.getRecords);
 
+// 获取学员分析数据
+router.get('/:studentId/analysis', auth, studentController.getAnalysisData);
+
 module.exports = router; 
