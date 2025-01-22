@@ -4,6 +4,9 @@ const { auth } = require('../middleware/auth');
 const authorOnly = require('../middleware/authorOnly');
 const studentController = require('../controllers/studentController');
 
+// 获取收入分析 (放在具体 id 路由之前)
+router.get('/income/analysis', auth, studentController.getIncomeAnalysis);
+
 // 学员管理
 router.get('/', auth, studentController.getStudents);
 router.post('/', auth, authorOnly, studentController.createStudent);
@@ -28,9 +31,12 @@ router.get('/:id/attendance', auth, studentController.getRecords);
 router.get('/:studentId/analysis', auth, studentController.getAnalysisData);
 
 // 恢复学员
-router.put('/:id/restore', auth, studentController.restoreStudent)
+router.put('/:id/restore', auth, studentController.restoreStudent);
 
 // 彻底删除学员
-router.delete('/:id/permanent', auth, studentController.permanentDeleteStudent)
+router.delete('/:id/permanent', auth, studentController.permanentDeleteStudent);
+
+// 修改记录
+router.put('/records/:id', auth, authorOnly, studentController.updateRecord);
 
 module.exports = router; 

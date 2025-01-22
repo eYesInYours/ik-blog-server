@@ -361,7 +361,7 @@ exports.getRecords = async (req, res) => {
             .sort({ recordTime: -1 })
             .skip((page - 1) * limit)
             .limit(Number(limit))
-            .populate('lessonId', 'name');
+            .populate('lessonId', 'name price');
 
         res.json({
             code: SUCCESS.OK,
@@ -548,4 +548,212 @@ exports.permanentDeleteStudent = async (req, res) => {
             message: '彻底删除学员失败'
         })
     }
-} 
+}
+
+// 修改记录
+exports.updateRecord = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { sessions, amount } = req.body;
+
+        // 查找记录
+        const record = await Record.findById(id).populate('lessonId');
+        if (!record) {
+            return res.status(404).json({
+                code: 404,
+                message: '记录不存在'
+            });
+        }
+
+        // 保存修改前的值
+        const beforeValues = {
+            amount: record.amount,
+            sessions: record.sessions
+        };
+
+        // 根据记录类型处理不同的修改逻辑
+        if (record.type === 'attendance') {
+            if (!record.lessonId) {
+                return res.status(400).json({
+                    code: 400,
+                    message: '课程信息不存在'
+                });
+            }
+
+            // 计算新的扣费金额
+            const newAmount = -(sessions * record.lessonId.price);
+            
+            // 更新学员余额
+            const amountDiff = newAmount - record.amount;
+            await Student.findByIdAndUpdate(
+                record.studentId,
+                { $inc: { balance: -amountDiff } }
+            );
+
+            // 更新记录
+            record.amount = Number(newAmount.toFixed(2));
+            record.sessions = -sessions;  // 保持负数表示扣除
+        } else {
+            // 充值记录只更新金额
+            const amountDiff = amount - record.amount;
+            await Student.findByIdAndUpdate(
+                record.studentId,
+                { $inc: { balance: amountDiff } }
+            );
+
+            record.amount = amount;
+        }
+
+        // 添加修改历史
+        record.modifyHistory.push({
+            before: beforeValues,
+            after: {
+                amount: record.amount,
+                sessions: record.sessions
+            }
+        });
+
+        await record.save();
+
+        res.json({
+            code: 200,
+            data: record,
+            message: '修改成功'
+        });
+    } catch (error) {
+        console.error('修改记录失败:', error);
+        res.status(500).json({
+            code: 500,
+            message: '修改记录失败'
+        });
+    }
+};
+
+// 获取收入分析数据
+exports.getIncomeAnalysis = async (req, res) => {
+  try {
+    const { timeRange = 'month', date } = req.query;
+    
+    // 确定时间范围和分组格式
+    let startDate;
+    let endDate;
+    let groupFormat;
+    
+    const selectedDate = date ? new Date(date) : new Date();
+    
+    switch(timeRange) {
+      case 'week':
+        // 获取所选日期所在周的周一
+        startDate = new Date(selectedDate);
+        startDate.setDate(selectedDate.getDate() - selectedDate.getDay() + 1);
+        // 周日
+        endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + 6);
+        groupFormat = "%Y-%m-%d";
+        break;
+        
+      case 'year':
+        startDate = new Date(selectedDate.getFullYear(), 0, 1);
+        endDate = new Date(selectedDate.getFullYear(), 11, 31);
+        groupFormat = "%Y-%m";
+        break;
+        
+      case 'month':
+      default:
+        startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+        endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+        groupFormat = "%Y-%m-%d";
+        break;
+    }
+
+    // 聚合查询收入数据
+    const records = await Record.aggregate([
+      {
+        $match: {
+          recordTime: { $gte: startDate, $lte: endDate }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            date: { $dateToString: { format: groupFormat, date: "$recordTime" } },
+            type: "$type"
+          },
+          totalAmount: { $sum: "$amount" }
+        }
+      },
+      {
+        $group: {
+          _id: "$_id.date",
+          income: {
+            $push: {
+              type: "$_id.type",
+              amount: "$totalAmount"
+            }
+          }
+        }
+      },
+      {
+        $sort: { "_id": 1 }
+      }
+    ]);
+
+    // 生成完整的日期序列
+    const dates = [];
+    const rechargeAmounts = [];
+    const consumptionAmounts = [];
+    let totalRecharge = 0;
+    let totalConsumption = 0;
+
+    // 根据时间范围生成日期序列
+    let currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+      let dateStr;
+      if (timeRange === 'year') {
+        const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
+        dateStr = `${currentDate.getFullYear()}-${month}`;
+        currentDate.setMonth(currentDate.getMonth() + 1);
+      } else {
+        dateStr = currentDate.toISOString().slice(0, 10);
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      dates.push(dateStr);
+      
+      // 查找对应日期的记录
+      const record = records.find(r => r._id === dateStr);
+      if (record) {
+        const recharge = record.income.find(i => i.type === 'recharge')?.amount || 0;
+        const consumption = Math.abs(record.income.find(i => i.type === 'attendance')?.amount || 0);
+        rechargeAmounts.push(recharge);
+        consumptionAmounts.push(consumption);
+        totalRecharge += recharge;
+        totalConsumption += consumption;
+      } else {
+        rechargeAmounts.push(0);
+        consumptionAmounts.push(0);
+      }
+    }
+
+    res.json({
+      code: 200,
+      data: {
+        summary: {
+          totalRecharge,         // 总充值金额（押金）
+          totalConsumption,      // 总消费金额
+          profit: totalConsumption  // 利润就是消费金额（您的课时收入）
+        },
+        trend: {
+          dates,
+          recharge: rechargeAmounts,    // 充值金额趋势
+          consumption: consumptionAmounts // 消费金额趋势（实际收入）
+        }
+      }
+    });
+  } catch (error) {
+    console.error('获取收入分析失败:', error);
+    res.status(500).json({
+      code: 500,
+      message: '获取收入分析失败'
+    });
+  }
+}; 
