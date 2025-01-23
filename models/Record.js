@@ -62,7 +62,7 @@ const recordSchema = new mongoose.Schema({
     // 添加修改历史数组
     modifyHistory: [modifyHistorySchema]
 }, {
-    timestamps: true
+    timestamps: true,   // 添加创建和更新时间
 });
 
 module.exports = mongoose.model('Record', recordSchema); 

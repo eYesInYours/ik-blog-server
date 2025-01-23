@@ -355,10 +355,12 @@ exports.getRecords = async (req, res) => {
             query.type = type // 添加类型筛选
         }
 
-        // 获取记录
+        // 获取记录总数
         const total = await Record.countDocuments(query);
+
+        // 获取记录列表，按创建时间降序排序
         const records = await Record.find(query)
-            .sort({ recordTime: -1 })
+            .sort({ createdAt: -1 }) // 修改为按创建时间降序
             .skip((page - 1) * limit)
             .limit(Number(limit))
             .populate('lessonId', 'name price');
@@ -554,7 +556,7 @@ exports.permanentDeleteStudent = async (req, res) => {
 exports.updateRecord = async (req, res) => {
     try {
         const { id } = req.params;
-        const { sessions, amount } = req.body;
+        const { sessions, amount, recordTime } = req.body;
 
         // 查找记录
         const record = await Record.findById(id).populate('lessonId');
@@ -568,7 +570,8 @@ exports.updateRecord = async (req, res) => {
         // 保存修改前的值
         const beforeValues = {
             amount: record.amount,
-            sessions: record.sessions
+            sessions: record.sessions,
+            recordTime: record.recordTime
         };
 
         // 根据记录类型处理不同的修改逻辑
@@ -593,6 +596,9 @@ exports.updateRecord = async (req, res) => {
             // 更新记录
             record.amount = Number(newAmount.toFixed(2));
             record.sessions = -sessions;  // 保持负数表示扣除
+            if (recordTime) {
+                record.recordTime = recordTime; // 更新签到时间
+            }
         } else {
             // 充值记录只更新金额
             const amountDiff = amount - record.amount;
@@ -609,7 +615,8 @@ exports.updateRecord = async (req, res) => {
             before: beforeValues,
             after: {
                 amount: record.amount,
-                sessions: record.sessions
+                sessions: record.sessions,
+                recordTime: record.recordTime
             }
         });
 
@@ -666,7 +673,7 @@ exports.getIncomeAnalysis = async (req, res) => {
         break;
     }
 
-    // 聚合查询收入数据
+    // 聚合查询收入和课时数据
     const records = await Record.aggregate([
       {
         $match: {
@@ -679,7 +686,17 @@ exports.getIncomeAnalysis = async (req, res) => {
             date: { $dateToString: { format: groupFormat, date: "$recordTime" } },
             type: "$type"
           },
-          totalAmount: { $sum: "$amount" }
+          totalAmount: { $sum: "$amount" },
+          // 只统计签到类型的课时数，并取绝对值（因为签到记录的 sessions 是负数）
+          totalSessions: {
+            $sum: {
+              $cond: [
+                { $eq: ["$type", "attendance"] },
+                { $abs: "$sessions" },
+                0
+              ]
+            }
+          }
         }
       },
       {
@@ -688,7 +705,8 @@ exports.getIncomeAnalysis = async (req, res) => {
           income: {
             $push: {
               type: "$_id.type",
-              amount: "$totalAmount"
+              amount: "$totalAmount",
+              sessions: "$totalSessions"
             }
           }
         }
@@ -702,8 +720,10 @@ exports.getIncomeAnalysis = async (req, res) => {
     const dates = [];
     const rechargeAmounts = [];
     const consumptionAmounts = [];
+    const sessionCounts = []; // 添加课时数组
     let totalRecharge = 0;
     let totalConsumption = 0;
+    let totalSessions = 0; // 添加总课时统计
 
     // 根据时间范围生成日期序列
     let currentDate = new Date(startDate);
@@ -724,15 +744,25 @@ exports.getIncomeAnalysis = async (req, res) => {
       if (record) {
         const recharge = record.income.find(i => i.type === 'recharge')?.amount || 0;
         const consumption = Math.abs(record.income.find(i => i.type === 'attendance')?.amount || 0);
+        // 只获取签到记录的课时数
+        const sessions = record.income.find(i => i.type === 'attendance')?.sessions || 0;
+        
         rechargeAmounts.push(recharge);
         consumptionAmounts.push(consumption);
+        sessionCounts.push(sessions);
+        
         totalRecharge += recharge;
         totalConsumption += consumption;
+        totalSessions += sessions;
       } else {
         rechargeAmounts.push(0);
         consumptionAmounts.push(0);
+        sessionCounts.push(0);
       }
     }
+
+    // 计算实际到手收入
+    const actualIncome = Math.min(totalRecharge, totalConsumption);
 
     res.json({
       code: 200,
@@ -740,12 +770,15 @@ exports.getIncomeAnalysis = async (req, res) => {
         summary: {
           totalRecharge,         // 总充值金额（押金）
           totalConsumption,      // 总消费金额
-          profit: totalConsumption  // 利润就是消费金额（您的课时收入）
+          profit: actualIncome,  // 实际到手收入
+          pendingIncome: totalConsumption - actualIncome, // 待收金额
+          totalSessions         // 总课时数
         },
         trend: {
           dates,
           recharge: rechargeAmounts,    // 充值金额趋势
-          consumption: consumptionAmounts // 消费金额趋势（实际收入）
+          consumption: consumptionAmounts, // 消费金额趋势
+          sessions: sessionCounts       // 课时趋势
         }
       }
     });
