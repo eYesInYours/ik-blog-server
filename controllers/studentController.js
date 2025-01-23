@@ -139,20 +139,10 @@ exports.enrollLesson = async (req, res) => {
 // 签到
 exports.attendance = async (req, res) => {
     try {
-        const { studentId, lessonId, sessions, attendanceTime, remark } = req.body;
+        const { studentId, lessonId, sessions, attendanceTime } = req.body;
 
-        const [student, lesson] = await Promise.all([
-            Student.findById(studentId),
-            Lesson.findById(lessonId)
-        ]);
-
-        if (!student) {
-            return res.status(CLIENT_ERROR.NOT_FOUND).json({
-                code: CLIENT_ERROR.NOT_FOUND,
-                message: '学员不存在'
-            });
-        }
-
+        // 获取课程信息
+        const lesson = await Lesson.findById(lessonId);
         if (!lesson) {
             return res.status(CLIENT_ERROR.NOT_FOUND).json({
                 code: CLIENT_ERROR.NOT_FOUND,
@@ -160,35 +150,52 @@ exports.attendance = async (req, res) => {
             });
         }
 
-        // 计算扣除的金额
-        const amount = -(sessions * lesson.price);
+        // 计算课时费
+        const amount = -(lesson.price * Math.abs(sessions)); // 使用负数表示支出
+
+        // 获取学员当前余额
+        const student = await Student.findById(studentId);
+        if (!student) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '学员不存在'
+            });
+        }
+
+        // 检查余额是否足够
+        if (student.balance < Math.abs(amount)) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '余额不足'
+            });
+        }
 
         // 创建签到记录
         const record = new Record({
             studentId,
             lessonId,
             type: 'attendance',
-            sessions: -sessions,
-            amount,
+            sessions: -sessions, // 使用负数表示消耗课时
+            amount, // 负数表示支出
             recordTime: attendanceTime || new Date(),
-            remark
+            remark: req.body.remark
         });
+
         await record.save();
 
         // 更新学员余额
-        student.balance += amount;
-        await student.save();
+        const newBalance = student.balance + amount; // 扣减余额
+        await Student.findByIdAndUpdate(studentId, { balance: newBalance });
 
         res.json({
             code: SUCCESS.OK,
-            message: '签到成功',
             data: {
                 record,
-                balance: student.balance
+                balance: newBalance
             }
         });
     } catch (error) {
-        console.error(chalk.red('签到错误:'), error);
+        console.error('签到失败:', error);
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             code: SERVER_ERROR.INTERNAL_ERROR,
             message: '签到失败'
@@ -352,7 +359,7 @@ exports.getRecords = async (req, res) => {
         // 构建查询条件
         const query = { studentId: id }
         if (type) {
-            query.type = type // 添加类型筛选
+            query.type = type
         }
 
         // 获取记录总数
@@ -360,15 +367,32 @@ exports.getRecords = async (req, res) => {
 
         // 获取记录列表，按创建时间降序排序
         const records = await Record.find(query)
-            .sort({ createdAt: -1 }) // 修改为按创建时间降序
+            .sort({ recordTime: -1 })
             .skip((page - 1) * limit)
             .limit(Number(limit))
             .populate('lessonId', 'name price');
+
+        // 计算学员当前余额
+        const allRecords = await Record.find({ studentId: id });
+        let balance = 0;
+        allRecords.forEach(record => {
+            if (record.type === 'recharge') {
+                // 充值记录：增加余额
+                balance += Math.abs(record.amount);
+            } else if (record.type === 'attendance') {
+                // 签到记录：扣减余额
+                balance -= Math.abs(record.amount);
+            }
+        });
+
+        // 更新学员余额
+        await Student.findByIdAndUpdate(id, { balance });
 
         res.json({
             code: SUCCESS.OK,
             data: {
                 records,
+                balance, // 返回当前余额
                 pagination: {
                     total,
                     page: Number(page),
