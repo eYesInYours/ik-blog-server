@@ -10,7 +10,8 @@ const visitSchema = new mongoose.Schema({
     // 记录访问者的用户代理信息（浏览器、操作系统等）
     userAgent: {
         type: String,
-        required: true
+        required: false,
+        default: 'Unknown'
     },
     // 记录访问的路径（例如：/api/articles）
     path: {
