@@ -572,7 +572,7 @@ exports.permanentDeleteStudent = async (req, res) => {
 exports.updateRecord = async (req, res) => {
     try {
         const { id } = req.params;
-        const { sessions, amount, recordTime } = req.body;
+        const { sessions, amount, recordTime, remark } = req.body;
 
         // 查找记录
         const record = await Record.findById(id).populate('lessonId');
@@ -587,7 +587,7 @@ exports.updateRecord = async (req, res) => {
         const beforeValues = {
             amount: record.amount,
             sessions: record.sessions,
-            recordTime: record.recordTime
+            recordTime: record.recordTime,
         };
 
         // 根据记录类型处理不同的修改逻辑
@@ -626,13 +626,16 @@ exports.updateRecord = async (req, res) => {
             record.amount = amount;
         }
 
+        // 修改记录的备注
+        record.remark = remark;
+
         // 添加修改历史
         record.modifyHistory.push({
             before: beforeValues,
             after: {
                 amount: record.amount,
                 sessions: record.sessions,
-                recordTime: record.recordTime
+                recordTime: record.recordTime,
             }
         });
 
