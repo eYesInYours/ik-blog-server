@@ -39,4 +39,7 @@ router.delete('/:id/permanent', auth, studentController.permanentDeleteStudent);
 // 修改记录
 router.put('/records/:id', auth, authorOnly, studentController.updateRecord);
 
+// 更新学员状态
+router.put('/:id/status', auth, studentController.updateStatus);
+
 module.exports = router; 

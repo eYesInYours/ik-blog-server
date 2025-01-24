@@ -162,14 +162,6 @@ exports.attendance = async (req, res) => {
             });
         }
 
-        // 检查余额是否足够
-        if (student.balance < Math.abs(amount)) {
-            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
-                code: CLIENT_ERROR.BAD_REQUEST,
-                message: '余额不足'
-            });
-        }
-
         // 创建签到记录
         const record = new Record({
             studentId,
@@ -813,4 +805,46 @@ exports.getIncomeAnalysis = async (req, res) => {
       message: '获取收入分析失败'
     });
   }
+};
+
+// 更新学员状态
+exports.updateStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        // 验证状态值
+        if (!['active', 'inactive'].includes(status)) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '无效的状态值'
+            });
+        }
+
+        // 更新学员状态
+        const student = await Student.findByIdAndUpdate(
+            id,
+            { status },
+            { new: true }
+        );
+
+        if (!student) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '学员不存在'
+            });
+        }
+
+        res.json({
+            code: SUCCESS.OK,
+            data: student,
+            message: '状态更新成功'
+        });
+    } catch (error) {
+        console.error('更新学员状态失败:', error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '更新学员状态失败'
+        });
+    }
 }; 
