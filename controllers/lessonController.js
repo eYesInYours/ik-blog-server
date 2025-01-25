@@ -1,146 +1,305 @@
-const { Lesson, LessonRecord } = require('../models/Lesson');
+const Lesson = require('../models/Lesson');
+const Student = require('../models/Student');
 const { SUCCESS, CLIENT_ERROR, SERVER_ERROR } = require('../constants/httpStatus');
+const chalk = require('chalk');
+const mongoose = require('mongoose');
 
-// 获取用户课时列表
+// 获取课程列表
 exports.getLessons = async (req, res) => {
-  try {
-    const lessons = await Lesson.find({ userId: req.user._id })
-      .sort({ createdAt: -1 });
+    try {
+        const { page = 1, limit = 10, keyword, type, stage, status } = req.query;
+        const query = {};
 
-    res.json({
-      code: SUCCESS.OK,
-      data: lessons
-    });
-  } catch (error) {
-    res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-      code: SERVER_ERROR.INTERNAL_ERROR,
-      message: '获取课时列表失败'
-    });
-  }
+        if (keyword) {
+            query.$or = [
+                { name: new RegExp(keyword, 'i') },
+                { description: new RegExp(keyword, 'i') }
+            ];
+        }
+
+        if (type) {
+            query.type = type;
+        }
+
+        if (stage) {
+            query.stage = stage;
+        }
+
+        if (status) {
+            query.status = status;
+        }
+
+        const lessons = await Lesson.find(query)
+            .sort({ sort: 1, createdAt: -1 }) // 先按sort排序，再按创建时间倒序
+            .skip((page - 1) * limit)
+            .limit(parseInt(limit));
+
+        const total = await Lesson.countDocuments(query);
+
+        res.json({
+            code: 200,
+            data: {
+                lessons,
+                pagination: {
+                    total,
+                    page: parseInt(page),
+                    limit: parseInt(limit)
+                }
+            }
+        });
+    } catch (error) {
+        console.error('获取课程列表失败:', error);
+        res.status(500).json({
+            code: 500,
+            message: '获取课程列表失败'
+        });
+    }
 };
 
-// 获取课时使用记录
-exports.getLessonRecords = async (req, res) => {
-  try {
-    const records = await LessonRecord.find({ userId: req.user._id })
-      .populate('lessonId', 'title')
-      .sort({ createdAt: -1 });
-
-    res.json({
-      code: SUCCESS.OK,
-      data: records
-    });
-  } catch (error) {
-    res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-      code: SERVER_ERROR.INTERNAL_ERROR,
-      message: '获取使用记录失败'
-    });
-  }
-};
-
-// 创建课时(充值)
+// 创建课程
 exports.createLesson = async (req, res) => {
-  try {
-    const { title, duration } = req.body;
-
-    const lesson = new Lesson({
-      userId: req.user._id,
-      title,
-      duration,
-      remainingTime: duration
-    });
-
-    await lesson.save();
-
-    res.status(SUCCESS.CREATED).json({
-      code: SUCCESS.CREATED,
-      message: '课时创建成功',
-      data: lesson
-    });
-  } catch (error) {
-    res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-      code: SERVER_ERROR.INTERNAL_ERROR,
-      message: '课时创建失败'
-    });
-  }
+    try {
+        const lesson = new Lesson(req.body);
+        await lesson.save();
+        res.json({
+            code: SUCCESS.OK,
+            message: '课程创建成功',
+            data: lesson
+        });
+    } catch (error) {
+        console.error(chalk.red('创建课程错误:'), error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '创建课程失败'
+        });
+    }
 };
 
-// 使用课时
-exports.useLesson = async (req, res) => {
-  try {
-    const { lessonId } = req.params;
-    const { duration, teacherName } = req.body;
+// 获取课程详情
+exports.getLessonById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        // 检查 id 是否为有效的 ObjectId
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '无效的课程ID'
+            });
+        }
 
-    const lesson = await Lesson.findById(lessonId);
-    if (!lesson) {
-      return res.status(CLIENT_ERROR.NOT_FOUND).json({
-        code: CLIENT_ERROR.NOT_FOUND,
-        message: '课时不存在'
-      });
+        const lesson = await Lesson.findById(id);
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
+            });
+        }
+
+        res.json({
+            code: SUCCESS.OK,
+            data: lesson
+        });
+    } catch (error) {
+        console.error(chalk.red('获取课程详情错误:'), error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '获取课程详情失败'
+        });
     }
-
-    if (lesson.remainingTime < duration) {
-      return res.status(CLIENT_ERROR.BAD_REQUEST).json({
-        code: CLIENT_ERROR.BAD_REQUEST,
-        message: '剩余课时不足'
-      });
-    }
-
-    // 记录使用记录
-    const record = new LessonRecord({
-      lessonId,
-      userId: req.user._id,
-      duration,
-      teacherName
-    });
-
-    // 更新剩余课时
-    lesson.remainingTime -= duration;
-    if (lesson.remainingTime === 0) {
-      lesson.status = 'used';
-    }
-
-    await Promise.all([record.save(), lesson.save()]);
-
-    res.json({
-      code: SUCCESS.OK,
-      message: '课时使用成功',
-      data: {
-        record,
-        lesson
-      }
-    });
-  } catch (error) {
-    res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-      code: SERVER_ERROR.INTERNAL_ERROR,
-      message: '课时使用失败'
-    });
-  }
 };
 
-// 获取用户课时统计
-exports.getLessonStats = async (req, res) => {
-  try {
-    const [lessons, records] = await Promise.all([
-      Lesson.find({ userId: req.user._id }),
-      LessonRecord.find({ userId: req.user._id })
-    ]);
+// 更新课程
+exports.updateLesson = async (req, res) => {
+    try {
+        const { id } = req.params;
+        // 检查 id 是否为有效的 ObjectId
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '无效的课程ID'
+            });
+        }
 
-    const stats = {
-      totalMinutes: lessons.reduce((sum, lesson) => sum + lesson.duration, 0),
-      remainingMinutes: lessons.reduce((sum, lesson) => sum + lesson.remainingTime, 0),
-      completedLessons: records.filter(record => record.status === 'completed').length,
-      totalSpent: lessons.reduce((sum, lesson) => sum + lesson.duration * 10, 0) // 假设每分钟10元
-    };
+        const lesson = await Lesson.findByIdAndUpdate(id, req.body, { new: true });
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
+            });
+        }
 
-    res.json({
-      code: SUCCESS.OK,
-      data: stats
-    });
-  } catch (error) {
-    res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-      code: SERVER_ERROR.INTERNAL_ERROR,
-      message: '获取统计数据失败'
-    });
-  }
-}; 
+        res.json({
+            code: SUCCESS.OK,
+            message: '课程更新成功',
+            data: lesson
+        });
+    } catch (error) {
+        console.error(chalk.red('更新课程错误:'), error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '更新课程失败'
+        });
+    }
+};
+
+// 删除课程
+exports.deleteLesson = async (req, res) => {
+    try {
+        const { id } = req.params;
+        // 检查 id 是否为有效的 ObjectId
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '无效的课程ID'
+            });
+        }
+
+        const lesson = await Lesson.findByIdAndDelete(id);
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
+            });
+        }
+
+        res.json({
+            code: SUCCESS.OK,
+            message: '课程删除成功'
+        });
+    } catch (error) {
+        console.error(chalk.red('删除课程错误:'), error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '删除课程失败'
+        });
+    }
+};
+
+// 更新课程状态
+exports.updateLessonStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        // 检查 id 是否为有效的 ObjectId
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '无效的课程ID'
+            });
+        }
+
+        const lesson = await Lesson.findByIdAndUpdate(
+            id,
+            { status },
+            { new: true }
+        );
+
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
+            });
+        }
+
+        res.json({
+            code: SUCCESS.OK,
+            message: '状态更新成功',
+            data: lesson
+        });
+    } catch (error) {
+        console.error(chalk.red('更新课程状态错误:'), error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '更新课程状态失败'
+        });
+    }
+};
+
+// 获取课程的学员列表
+exports.getLessonStudents = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { page = 1, limit = 10 } = req.query;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '无效的课程ID'
+            });
+        }
+
+        const students = await Student.find({
+            'lessons.lessonId': id
+        })
+        .select('name phone email status lessons.$')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(Number(limit));
+
+        const total = await Student.countDocuments({
+            'lessons.lessonId': id
+        });
+
+        res.json({
+            code: SUCCESS.OK,
+            data: {
+                students,
+                pagination: {
+                    total,
+                    page: Number(page),
+                    limit: Number(limit)
+                }
+            }
+        });
+    } catch (error) {
+        console.error(chalk.red('获取课程学员列表错误:'), error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '获取课程学员列表失败'
+        });
+    }
+};
+
+// 更新课程排序
+exports.updateSort = async (req, res) => {
+    try {
+        const { id, targetId, type } = req.body
+        
+        // 获取当前课程和目标课程的排序值
+        const currentLesson = await Lesson.findById(id)
+        const targetLesson = await Lesson.findById(targetId)
+        
+        if (!currentLesson || !targetLesson) {
+            return res.status(404).json({
+                code: 404,
+                message: '课程不存在'
+            })
+        }
+        
+        // 计算新的排序值
+        const newSort = type === 'after' 
+            ? targetLesson.sort + 1 
+            : targetLesson.sort - 1
+        
+        // 更新排序值
+        await Lesson.findByIdAndUpdate(id, { sort: newSort })
+        
+        // 重新排序所有课程，确保排序值连续
+        const lessons = await Lesson.find().sort('sort')
+        for (let i = 0; i < lessons.length; i++) {
+            await Lesson.findByIdAndUpdate(lessons[i]._id, { sort: i + 1 })
+        }
+        
+        res.json({
+            code: 200,
+            message: '排序更新成功'
+        })
+    } catch (error) {
+        console.error('更新排序失败:', error)
+        res.status(500).json({
+            code: 500,
+            message: '更新排序失败'
+        })
+    }
+}

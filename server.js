@@ -55,7 +55,11 @@ app.use(cors({
     origin: true, // 允许所有来源
     credentials: true, // 允许携带凭证
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+<<<<<<< HEAD
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'RefreshToken']
+=======
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+>>>>>>> 0fef550f14e7be01fb3cb23d20ae4f3ba181117c
 }));
 
 // 中间件
@@ -81,6 +85,8 @@ apiRouter.use('/captcha', require('./routes/captcha'));
 apiRouter.use('/categories', require('./routes/categories'));
 apiRouter.use('/diaries', require('./routes/diary'));
 apiRouter.use('/notifications', require('./routes/notifications'));
+apiRouter.use('/lessons', require('./routes/lesson'));
+apiRouter.use('/students', require('./routes/student'));
 // 挂载 API 路由到 /api 路径
 app.use('/api', apiRouter);
 
