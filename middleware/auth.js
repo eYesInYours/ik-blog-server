@@ -52,7 +52,8 @@ const auth = async (req, res, next) => {
             console.log(chalk.yellow('JWT验证失败:', jwtError.message));
             
             if (jwtError.name === 'TokenExpiredError') {
-                return res.status(CLIENT_ERROR.UNAUTHORIZED).json({
+                return res.status(CLIENT_ERROR.TOKEN_EXPIRED).json({
+                    code: CLIENT_ERROR.TOKEN_EXPIRED,
                     message: '认证令牌已过期',
                     error: AUTH_ERRORS.TOKEN_EXPIRED
                 });
@@ -60,6 +61,7 @@ const auth = async (req, res, next) => {
             
             if (jwtError.name === 'JsonWebTokenError') {
                 return res.status(CLIENT_ERROR.UNAUTHORIZED).json({
+                    code: CLIENT_ERROR.UNAUTHORIZED,
                     message: '无效的认证令牌',
                     error: AUTH_ERRORS.TOKEN_INVALID
                 });

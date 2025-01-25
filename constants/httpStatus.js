@@ -6,7 +6,8 @@ exports.SUCCESS = {
 
 exports.CLIENT_ERROR = {
     BAD_REQUEST: 400,    // 请求错误
-    UNAUTHORIZED: 401,   // 未授权
+    UNAUTHORIZED: 401,   // 未授权(未登录)
+    TOKEN_EXPIRED: 419,  // 令牌过期(特殊状态码)
     FORBIDDEN: 403,      // 禁止访问
     NOT_FOUND: 404,      // 资源不存在
     CONFLICT: 409,       // 资源冲突
