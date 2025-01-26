@@ -222,13 +222,11 @@ exports.refreshToken = async (req, res) => {
                 return res.status(CLIENT_ERROR.TOKEN_EXPIRED).json({
                     code: CLIENT_ERROR.TOKEN_EXPIRED,
                     message: 'refresh_token已过期，请重新登录',
-                    error: AUTH_ERRORS.TOKEN_EXPIRED
                 });
             }
             return res.status(CLIENT_ERROR.UNAUTHORIZED).json({
                 code: CLIENT_ERROR.UNAUTHORIZED,
                 message: '无效的refresh_token',
-                error: AUTH_ERRORS.TOKEN_INVALID
             });
         }
     } catch (error) {
