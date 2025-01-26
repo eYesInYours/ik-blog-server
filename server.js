@@ -33,6 +33,41 @@ if (!fs.existsSync(uploadsDir)) {
 // 初始化 Express 应用
 const app = express();
 
+// 在所有中间件之前添加信任代理配置
+app.set('trust proxy', 1);
+
+// CORS 配置
+app.use(cors({
+    origin: function(origin, callback) {
+        const allowedOrigins = process.env.NODE_ENV === 'production'
+            ? [
+                'http://ikchen.top',
+                'http://www.ikchen.top',
+                'http://admin.ikchen.top',
+                'http://39.108.121.16'
+              ]
+            : ['http://localhost:3010', 'http://localhost:3333'];
+        
+        // 打印调试信息
+        console.log('Request Origin:', origin);
+        
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.log('不允许的域名:', origin);
+            callback(new Error('不允许的域名'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'RefreshToken', 'Cookie'],
+    exposedHeaders: ['Set-Cookie']
+}));
+
+// 基础中间件
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // Session 配置
 app.use(session({
     secret: process.env.SESSION_SECRET || 'your-secret-key',
@@ -44,44 +79,24 @@ app.use(session({
     }),
     cookie: {
         httpOnly: true,
-        secure: false, // 由于没有 HTTPS，需要设置为 false
+        secure: false,
         maxAge: 5 * 60 * 1000, // 5分钟
-        sameSite: 'lax',
-        domain: process.env.NODE_ENV === 'production' 
-            ? 'ikchen.top'  // 不需要前导点，直接使用顶级域名
-            : undefined     // 开发环境使用默认值
+        sameSite: 'lax'
     }
 }));
 
-// CORS 配置
-app.use(cors({
-    origin: function(origin, callback) {
-        // 允许的域名列表
-        const allowedOrigins = process.env.NODE_ENV === 'production'
-            ? [
-                'http://ikchen.top',
-                'http://www.ikchen.top',
-                'http://admin.ikchen.top',
-                // 可以继续添加其他子域名
-              ]
-            : ['http://localhost:3010', 'http://localhost:3333'];
-        
-        // 允许没有 origin 的请求（比如移动端应用）
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            console.log('不允许的域名:', origin); // 添加日志便于调试
-            callback(new Error('不允许的域名'));
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'RefreshToken']
-}));
-
-// 中间件
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 调试中间件 - 添加更多信息
+app.use((req, res, next) => {
+    console.log('=== Request Debug ===');
+    console.log('URL:', req.url);
+    console.log('Origin:', req.headers.origin);
+    console.log('Host:', req.headers.host);
+    console.log('Cookie:', req.headers.cookie);
+    console.log('Session:', req.session);
+    console.log('===================');
+    console.log('\t')
+    next();
+});
 
 // 访问日志中间件
 app.use(visitLogger);
