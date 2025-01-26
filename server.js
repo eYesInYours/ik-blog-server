@@ -44,16 +44,37 @@ app.use(session({
     }),
     cookie: {
         httpOnly: true,
-        secure: false,
+        secure: false, // 由于没有 HTTPS，需要设置为 false
         maxAge: 5 * 60 * 1000, // 5分钟
-        sameSite: 'lax'
+        sameSite: 'lax',
+        domain: process.env.NODE_ENV === 'production' 
+            ? 'ikchen.top'  // 不需要前导点，直接使用顶级域名
+            : undefined     // 开发环境使用默认值
     }
 }));
 
 // CORS 配置
 app.use(cors({
-    origin: true, // 允许所有来源
-    credentials: true, // 允许携带凭证
+    origin: function(origin, callback) {
+        // 允许的域名列表
+        const allowedOrigins = process.env.NODE_ENV === 'production'
+            ? [
+                'http://ikchen.top',
+                'http://www.ikchen.top',
+                'http://admin.ikchen.top',
+                // 可以继续添加其他子域名
+              ]
+            : ['http://localhost:3010', 'http://localhost:3333'];
+        
+        // 允许没有 origin 的请求（比如移动端应用）
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.log('不允许的域名:', origin); // 添加日志便于调试
+            callback(new Error('不允许的域名'));
+        }
+    },
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'RefreshToken']
 }));
