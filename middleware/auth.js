@@ -34,6 +34,7 @@ const auth = async (req, res, next) => {
         }
 
         try {
+            // 解码token
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
             
             // 从数据库获取完整的用户信息

@@ -103,6 +103,7 @@ exports.getArticles = async (req, res) => {
                 title: 1,
                 content: 1,
                 category: 1,
+                categoryName: 1,
                 cover: 1,
                 tags: 1,
                 createdAt: 1,
@@ -620,20 +621,49 @@ exports.getArticleArchives = async (req, res) => {
                 const categoryMap = new Map()
 
                 // 先获取所有文章的分类ID
-                const categoryIds = [...new Set(articles.map(article => article.category))]
+                const categoryIds = [...new Set(articles.map(article => article.category).filter(Boolean))]
+                
+                console.log('找到的文章分类ID:', categoryIds)
+
+                if (categoryIds.length === 0) {
+                    archiveData = []
+                    break
+                }
 
                 // 查询所有相关的分类信息
                 const categories = await Category.find({
                     _id: { $in: categoryIds }
-                }).select('name')
+                }).select('name parentId')
+                
+                // 获取所有父分类ID
+                const parentIds = [...new Set(categories
+                    .map(cat => cat.parentId?.toString())
+                    .filter(Boolean)
+                )]
+                
+                // 查询父分类信息
+                const parentCategories = await Category.find({
+                    _id: { $in: parentIds }
+                }).select('name parentId')
+                
+                // 合并所有分类信息
+                const allCategories = [...categories, ...parentCategories]
+                
+                console.log('所有分类信息:', allCategories)
 
-                // 创建分类ID到分类名称的映射
-                const categoryNameMap = new Map(
-                    categories.map(cat => [cat._id.toString(), cat.name])
-                )
+                // 创建分类ID到名称和父分类的映射
+                const categoryInfoMap = new Map()
+                allCategories.forEach(cat => {
+                    categoryInfoMap.set(cat._id.toString(), {
+                        name: cat.name,
+                        parentId: cat.parentId ? cat.parentId.toString() : null
+                    })
+                })
 
                 // 按分类分组文章
                 articles.forEach(article => {
+                    if (!article.category) return
+                    
                     const categoryId = article.category.toString()
                     if (!categoryMap.has(categoryId)) {
                         categoryMap.set(categoryId, [])
@@ -647,15 +677,65 @@ exports.getArticleArchives = async (req, res) => {
                     })
                 })
 
-                // 构建归档数据
-                archiveData = Array.from(categoryMap.entries())
-                    .map(([categoryId, articles]) => ({
-                        category: categoryId,
-                        categoryName: categoryNameMap.get(categoryId) || '未分类', // 使用查询到的分类名称
-                        articles,
-                        count: articles.length
+                // 构建层级归档数据
+                const parentChildMap = new Map() // 存储父分类及其子分类
+                const childCategories = new Set() // 存储所有子分类ID
+
+                // 识别所有的父子关系
+                allCategories.forEach(category => {
+                    if (category.parentId) {
+                        childCategories.add(category._id.toString())
+                        const parentId = category.parentId.toString()
+                        if (!parentChildMap.has(parentId)) {
+                            parentChildMap.set(parentId, [])
+                        }
+                        parentChildMap.get(parentId).push(category._id.toString())
+                    }
+                })
+
+                // 构建临时归档数据
+                let tempArchiveData = Array.from(categoryMap.entries())
+                    .map(([categoryId, articles]) => {
+                        const info = categoryInfoMap.get(categoryId)
+                        return {
+                            category: categoryId,
+                            categoryName: info?.name || '未分类',
+                            parentId: info?.parentId,
+                            articles,
+                            count: articles.length
+                        }
+                    })
+
+                // 为父分类创建条目（即使没有直接的文章）
+                parentIds.forEach(parentId => {
+                    const info = categoryInfoMap.get(parentId)
+                    if (info && !categoryMap.has(parentId)) {
+                        const childrenArticles = (parentChildMap.get(parentId) || [])
+                            .flatMap(childId => categoryMap.get(childId) || [])
+                        
+                        tempArchiveData.push({
+                            category: parentId,
+                            categoryName: info.name,
+                            parentId: info.parentId,
+                            articles: [], // 父分类本身没有文章
+                            count: childrenArticles.length, // 但计数包含子分类的文章
+                            children: []
+                        })
+                    }
+                })
+
+                // 组织最终的层级结构
+                archiveData = tempArchiveData
+                    .filter(item => !item.parentId) // 只保留顶级分类
+                    .map(parent => ({
+                        ...parent,
+                        children: tempArchiveData
+                            .filter(child => child.parentId === parent.category)
+                            .sort((a, b) => b.count - a.count)
                     }))
                     .sort((a, b) => b.count - a.count)
+
+                console.log('最终归档数据:', archiveData)
                 break
         }
 
