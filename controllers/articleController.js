@@ -372,21 +372,20 @@ exports.getAllArticlesAdmin = async (req, res) => {
         } = req.query;
 
         // 构建查询条件
-        const query = {
-            isDraft: { $ne: true }  // 排除草稿版本
-        };
+        const query = {};
 
-        // 状态筛选
-        if (status && ['draft', 'published', 'offline', 'online'].includes(status)) {
-            query.status = status;
-        }
-
-        // 关键字搜索
+        // 关键词搜索
         if (keyword) {
             query.$or = [
                 { title: new RegExp(keyword, 'i') },
-                { content: new RegExp(keyword, 'i') }
+                { content: new RegExp(keyword, 'i') },
+                { tags: new RegExp(keyword, 'i') }
             ];
+        }
+
+        // 状态筛选
+        if (status) {
+            query.status = status;
         }
 
         // 日期范围筛选
@@ -401,18 +400,13 @@ exports.getAllArticlesAdmin = async (req, res) => {
         }
 
         // 标签筛选
-        if (tags) {
-            const tagArray = Array.isArray(tags) ? tags : tags.split(',');
-            query.tags = { $in: tagArray };
+        if (tags && tags.length) {
+            query.tags = { $in: Array.isArray(tags) ? tags : [tags] };
         }
 
-        // 验证排序字段
-        const allowedSortFields = ['createdAt', 'updatedAt', 'title'];
-        const actualSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'createdAt';
-
-        // 构建排序对象
+        // 排序
         const sort = {
-            [actualSortBy]: sortOrder === 'asc' ? 1 : -1
+            [sortBy]: sortOrder === 'desc' ? -1 : 1
         };
 
         const articles = await Article.find(query)
