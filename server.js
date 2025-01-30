@@ -87,14 +87,14 @@ app.use(session({
 
 // 调试中间件 - 添加更多信息
 app.use((req, res, next) => {
-    console.log('=== Request Debug ===');
-    console.log('URL:', req.url);
-    console.log('Origin:', req.headers.origin);
-    console.log('Host:', req.headers.host);
-    console.log('Cookie:', req.headers.cookie);
-    console.log('Session:', req.session);
-    console.log('===================');
-    console.log('\t')
+    // console.log('=== Request Debug ===');
+    // console.log('URL:', req.url);
+    // console.log('Origin:', req.headers.origin);
+    // console.log('Host:', req.headers.host);
+    // console.log('Cookie:', req.headers.cookie);
+    // console.log('Session:', req.session);
+    // console.log('===================');
+    // console.log('\t')
     next();
 });
 

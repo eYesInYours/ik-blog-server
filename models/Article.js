@@ -24,7 +24,7 @@ const articleSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['draft', 'published'],
+        enum: ['draft', 'online', 'offline', 'published'],    // 草稿、上架、下架、已发布
         default: 'published'
     },
     author: {
@@ -61,7 +61,22 @@ const articleSchema = new mongoose.Schema({
     collections: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
-    }]
+    }],
+    // 草稿ID，指向草稿版本
+    draftId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Article'
+    },
+    // 原文ID，如果当前是草稿则指向原文
+    originalArticleId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Article'
+    },
+    // 是否为草稿版本
+    isDraft: {
+        type: Boolean,
+        default: false
+    }
 }, {
     timestamps: true
 });

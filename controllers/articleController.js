@@ -300,7 +300,7 @@ exports.getArticle = async (req, res) => {
 // 更新文章
 exports.updateArticle = async (req, res) => {
     try {
-        const { title, content, tags, cover, categoryName, category } = req.body;
+        const { title, content, tags, status, cover, categoryName, category } = req.body;
         const article = await Article.findById(req.params.id);
 
         if (!article) {
@@ -310,6 +310,7 @@ exports.updateArticle = async (req, res) => {
         article.title = title || article.title;
         article.content = content || article.content;
         article.tags = tags || article.tags;
+        article.status = status || article.status;
         article.cover = cover || article.cover;
         article.categoryName = categoryName || article.categoryName;
         article.category = category || article.category;
@@ -336,7 +337,14 @@ exports.deleteArticle = async (req, res) => {
             return res.status(404).json({ message: '文章不存在' });
         }
 
+        // 如果有关联的草稿，先删除草稿
+        if (article.draftId) {
+            await Article.findByIdAndDelete(article.draftId);
+        }
+
+        // 删除文章本身
         await article.deleteOne();
+
         res.json({
             code: SUCCESS.OK,
             data: null,
@@ -364,7 +372,14 @@ exports.getAllArticlesAdmin = async (req, res) => {
         } = req.query;
 
         // 构建查询条件
-        const query = {};
+        const query = {
+            isDraft: { $ne: true }  // 排除草稿版本
+        };
+
+        // 状态筛选
+        if (status && ['draft', 'published', 'offline', 'online'].includes(status)) {
+            query.status = status;
+        }
 
         // 关键字搜索
         if (keyword) {
@@ -372,11 +387,6 @@ exports.getAllArticlesAdmin = async (req, res) => {
                 { title: new RegExp(keyword, 'i') },
                 { content: new RegExp(keyword, 'i') }
             ];
-        }
-
-        // 状态筛选
-        if (status && ['active', 'disabled'].includes(status)) {
-            query.status = status;
         }
 
         // 日期范围筛选
@@ -407,9 +417,20 @@ exports.getAllArticlesAdmin = async (req, res) => {
 
         const articles = await Article.find(query)
             .populate('author', 'username avatar')
+            .populate('draftId')
             .sort(sort)
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
+
+        // 处理返回数据，计算统计数
+        const processedArticles = articles.map(article => {
+            const articleObj = article.toObject();
+            // 转换互动数据为数字
+            articleObj.likes = article.likes?.length || 0;
+            articleObj.collections = article.collections?.length || 0;
+            articleObj.comments = article.comments?.length || 0;
+            return articleObj;
+        });
 
         const total = await Article.countDocuments(query);
 
@@ -417,7 +438,7 @@ exports.getAllArticlesAdmin = async (req, res) => {
             code: SUCCESS.OK,
             message: '获取文章列表成功',
             data: {
-                articles,
+                articles: processedArticles,
                 pagination: {
                     total,
                     totalPages: Math.ceil(total / limit),
@@ -435,40 +456,34 @@ exports.getAllArticlesAdmin = async (req, res) => {
 // 更新文章状态（管理接口）
 exports.updateArticleStatus = async (req, res) => {
     try {
-        const { id } = req.params;
         const { status } = req.body;
-
-        if (!['active', 'disabled'].includes(status)) {
-            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
-                message: '无效的状态值'
-            });
-        }
-
-        const article = await Article.findByIdAndUpdate(
-            id,
-            { status },
-            { new: true }
-        ).populate('author', 'username avatar');
+        const article = await Article.findById(req.params.id);
 
         if (!article) {
-            return res.status(CLIENT_ERROR.NOT_FOUND).json({
-                message: '文章不存在'
-            });
+            return res.status(404).json({ message: '文章不存在' });
         }
 
+        // 验证状态值是否合法
+        const validStatuses = ['draft', 'published', 'offline', 'online'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ message: '无效的状态值' });
+        }
+
+        article.status = status;
+        await article.save();
+
         res.json({
-            message: '文章状态更新成功',
-            article
+            code: 200,
+            message: '更新状态成功',
+            data: article
         });
     } catch (error) {
-        console.error(chalk.red('更新文章状态错误:'), error);
-        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-            message: '更新文章状态失败'
-        });
+        console.error('更新文章状态失败:', error);
+        res.status(500).json({ message: '更新状态失败' });
     }
 };
 
-// 批量删除文章（管理接口）
+// 批量删除文章
 exports.batchDeleteArticles = async (req, res) => {
     try {
         const { ids } = req.body;
@@ -479,6 +494,20 @@ exports.batchDeleteArticles = async (req, res) => {
             });
         }
 
+        // 查找所有要删除的文章
+        const articles = await Article.find({ _id: { $in: ids } });
+        
+        // 收集所有关联的草稿ID
+        const draftIds = articles
+            .map(article => article.draftId)
+            .filter(id => id); // 过滤掉 null/undefined
+
+        // 删除所有关联的草稿
+        if (draftIds.length > 0) {
+            await Article.deleteMany({ _id: { $in: draftIds } });
+        }
+
+        // 删除文章
         const result = await Article.deleteMany({ _id: { $in: ids } });
 
         res.json({
@@ -868,5 +897,88 @@ exports.getAllArticles = async (req, res) => {
         res.status(500).json(
             error(SERVER_ERROR.INTERNAL_ERROR, '获取文章列表失败')
         );
+    }
+};
+
+// 创建/更新草稿
+exports.createDraft = async (req, res) => {
+    try {
+        const { originalArticleId } = req.body;
+        let draft;
+
+        // 从请求体中移除 likes 和 collections 字段
+        const draftData = { ...req.body };
+        delete draftData.likes;
+        delete draftData.collections;
+        delete draftData._id;  // 同时移除 _id，因为要创建新文档
+        
+        // 强制设置状态为草稿
+        draftData.status = 'draft';
+
+        // 检查是否已存在草稿
+        if (originalArticleId) {
+            draft = await Article.findOne({ 
+                originalArticleId,
+                isDraft: true 
+            });
+        }
+
+        if (draft) {
+            // 更新现有草稿
+            Object.assign(draft, draftData);
+            await draft.save();
+        } else {
+            // 创建新草稿
+            draft = new Article({
+                ...draftData,
+                isDraft: true,
+                status: 'draft',  // 确保新建草稿的状态为 draft
+                originalArticleId,
+                author: req.user._id,
+                likes: [],        // 初始化为空数组
+                collections: []   // 初始化为空数组
+            });
+            await draft.save();
+
+            // 更新原文的草稿引用
+            if (originalArticleId) {
+                await Article.findByIdAndUpdate(originalArticleId, {
+                    draftId: draft._id
+                });
+            }
+        }
+
+        res.json({
+            code: 200,
+            message: '草稿保存成功',
+            data: draft
+        });
+    } catch (error) {
+        console.error('保存草稿失败:', error);
+        res.status(500).json({ message: '保存草稿失败' });
+    }
+};
+
+// 获取文章草稿
+exports.getDraft = async (req, res) => {
+    try {
+        const article = await Article.findById(req.params.id)
+            .populate('draftId');
+
+        if (!article) {
+            return res.status(404).json({ message: '文章不存在' });
+        }
+
+        if (!article.draftId) {
+            return res.status(404).json({ message: '草稿不存在' });
+        }
+
+        res.json({
+            code: 200,
+            data: article.draftId
+        });
+    } catch (error) {
+        console.error('获取草稿失败:', error);
+        res.status(500).json({ message: '获取草稿失败' });
     }
 };

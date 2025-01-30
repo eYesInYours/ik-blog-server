@@ -40,4 +40,13 @@ router.post('/:id/like', auth, articleController.toggleLike);
 // 收藏/取消收藏文章（需要登录）
 router.post('/:id/collect', auth, articleController.toggleCollect);
 
+// 更新文章状态
+router.put('/:id/status', auth, authorOnly, articleController.updateArticleStatus);
+
+// 创建/更新草稿
+router.post('/draft', auth, authorOnly, articleController.createDraft);
+
+// 获取文章草稿
+router.get('/:id/draft', auth, authorOnly, articleController.getDraft);
+
 module.exports = router; 
