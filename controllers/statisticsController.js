@@ -3,70 +3,93 @@ const User = require('../models/User');
 const Visit = require('../models/Visit');
 const Comment = require('../models/Comment');
 const chalk = require('chalk');
+const { success } = require('../utils/responseHandler');
 
 exports.getStatistics = async (req, res) => {
     try {
-        const { period = '7days' } = req.query;
-        const now = new Date();
-        let daysCount;
-
-        // 根据查询周期确定天数
-        switch(period) {
-            case '24hours':
-                daysCount = 1;
-                break;
-            case '7days':
-                daysCount = 7;
-                break;
-            case '30days':
-                daysCount = 30;
-                break;
-            default:
-                daysCount = 7;
+        const { startDate, endDate, type = 'day' } = req.query;
+        if (!startDate || !endDate) {
+            return res.status(400).json({ message: '缺少必要的日期参数' });
         }
+
+        // 设置查询的起止时间
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
 
         // 设置时区为中国时区
         const timezone = 'Asia/Shanghai';
-        
-        // 计算开始日期（使用当地时间）
-        const startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - daysCount + 1);
-        startDate.setHours(0, 0, 0, 0);
 
-        // 计算结束日期（使用当地时间）
-        const endDate = new Date(now);
-        endDate.setHours(23, 59, 59, 999);
-
-        // 生成日期范围
-        const days = [];
-        for (let i = 0; i < daysCount; i++) {
-            const date = new Date(startDate);
-            date.setDate(date.getDate() + i);
-            days.push({
-                date: date.toISOString().split('T')[0],
-                visits: 0,
-                articles: 0,
-                users: 0,
-                comments: 0
-            });
+        // 根据查询类型设置日期格式
+        let dateFormat;
+        switch (type) {
+            case 'year':
+                dateFormat = '%Y';
+                break;
+            case 'month':
+                dateFormat = '%Y-%m';
+                break;
+            default:
+                dateFormat = '%Y-%m-%d';
         }
+
+        // 生成日期范围数组
+        const generateDateRange = () => {
+            const dates = [];
+            let current = new Date(start);
+            
+            while (current <= end) {
+                let dateKey;
+                if (type === 'year') {
+                    dateKey = current.getFullYear().toString();
+                } else if (type === 'month') {
+                    dateKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+                } else {
+                    dateKey = current.toISOString().split('T')[0];
+                }
+                
+                dates.push({
+                    date: dateKey,
+                    visits: 0,
+                    articles: 0,
+                    users: 0,
+                    comments: 0
+                });
+
+                // 增加时间间隔
+                if (type === 'year') {
+                    current.setFullYear(current.getFullYear() + 1);
+                } else if (type === 'month') {
+                    current.setMonth(current.getMonth() + 1);
+                } else {
+                    current.setDate(current.getDate() + 1);
+                }
+            }
+            return dates;
+        };
+
+        const days = generateDateRange();
+
+        // 查询条件
+        const dateRange = { 
+            $gte: start, 
+            $lte: end 
+        };
 
         // 获取文章统计
         const articlesStats = await Article.aggregate([
             {
                 $match: {
-                    createdAt: { 
-                        $gte: startDate, 
-                        $lte: endDate 
-                    },
-                    status: 'active'
+                    createdAt: dateRange,
+                    status: 'published'
                 }
             },
             {
                 $group: {
                     _id: {
                         $dateToString: {
-                            format: "%Y-%m-%d",
+                            format: dateFormat,
                             date: "$createdAt",
                             timezone
                         }
@@ -80,17 +103,14 @@ exports.getStatistics = async (req, res) => {
         const usersStats = await User.aggregate([
             {
                 $match: {
-                    createdAt: { 
-                        $gte: startDate, 
-                        $lte: endDate 
-                    }
+                    createdAt: dateRange
                 }
             },
             {
                 $group: {
                     _id: {
                         $dateToString: {
-                            format: "%Y-%m-%d",
+                            format: dateFormat,
                             date: "$createdAt",
                             timezone
                         }
@@ -104,17 +124,14 @@ exports.getStatistics = async (req, res) => {
         const visitsStats = await Visit.aggregate([
             {
                 $match: {
-                    timestamp: { 
-                        $gte: startDate, 
-                        $lte: endDate 
-                    }
+                    timestamp: dateRange
                 }
             },
             {
                 $group: {
                     _id: {
                         $dateToString: {
-                            format: "%Y-%m-%d",
+                            format: dateFormat,
                             date: "$timestamp",
                             timezone
                         }
@@ -128,17 +145,14 @@ exports.getStatistics = async (req, res) => {
         const commentsStats = await Comment.aggregate([
             {
                 $match: {
-                    createdAt: { 
-                        $gte: startDate, 
-                        $lte: endDate 
-                    }
+                    createdAt: dateRange
                 }
             },
             {
                 $group: {
                     _id: {
                         $dateToString: {
-                            format: "%Y-%m-%d",
+                            format: dateFormat,
                             date: "$createdAt",
                             timezone
                         }
@@ -161,34 +175,22 @@ exports.getStatistics = async (req, res) => {
             day.comments = commentStat ? commentStat.count : 0;
         });
 
-        // 获取总计数据（使用相同的时间范围）
-        const totals = {
-            articles: await Article.countDocuments({ 
-                createdAt: { $gte: startDate, $lte: endDate },
-                status: 'active' 
-            }),
-            users: await User.countDocuments({
-                createdAt: { $gte: startDate, $lte: endDate }
-            }),
-            comments: await Comment.countDocuments({
-                createdAt: { $gte: startDate, $lte: endDate }
-            }),
-            visits: await Visit.countDocuments({
-                timestamp: { $gte: startDate, $lte: endDate }
-            })
-        };
-
         const response = {
             dates: days.map(day => day.date),
             articles: days.map(day => day.articles),
             users: days.map(day => day.users),
             visits: days.map(day => day.visits),
             comments: days.map(day => day.comments),
-            totals
+            totals: {
+                articles: days.reduce((sum, day) => sum + day.articles, 0),
+                users: days.reduce((sum, day) => sum + day.users, 0),
+                visits: days.reduce((sum, day) => sum + day.visits, 0),
+                comments: days.reduce((sum, day) => sum + day.comments, 0)
+            }
         };
 
-        console.log(chalk.green(`成功获取 ${period} 的统计数据`));
-        res.json(response);
+        console.log(chalk.green(`成功获取 ${startDate} 到 ${endDate} 的${type}统计数据`));
+        res.json(success(response, '获取统计数据成功'));
 
     } catch (error) {
         console.error(chalk.red('获取统计数据错误:'), error);
