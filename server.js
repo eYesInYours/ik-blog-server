@@ -41,10 +41,7 @@ app.use(cors({
     origin: function(origin, callback) {
         const allowedOrigins = process.env.NODE_ENV === 'production'
             ? [
-                'http://ikchen.top',
-                'http://www.ikchen.top',
-                'http://admin.ikchen.top',
-                'http://39.108.121.16'
+                process.env.API_BASE
               ]
             : ['http://localhost:3010', 'http://localhost:3333'];
         

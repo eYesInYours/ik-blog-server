@@ -232,10 +232,10 @@ exports.getLessonStudents = async (req, res) => {
         const students = await Student.find({
             'lessons.lessonId': id
         })
-        .select('name phone email status lessons.$')
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(Number(limit));
+            .select('name phone email status lessons.$')
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(Number(limit));
 
         const total = await Student.countDocuments({
             'lessons.lessonId': id
@@ -265,32 +265,32 @@ exports.getLessonStudents = async (req, res) => {
 exports.updateSort = async (req, res) => {
     try {
         const { id, targetId, type } = req.body
-        
+
         // 获取当前课程和目标课程的排序值
         const currentLesson = await Lesson.findById(id)
         const targetLesson = await Lesson.findById(targetId)
-        
+
         if (!currentLesson || !targetLesson) {
             return res.status(404).json({
                 code: 404,
                 message: '课程不存在'
             })
         }
-        
+
         // 计算新的排序值
-        const newSort = type === 'after' 
-            ? targetLesson.sort + 1 
+        const newSort = type === 'after'
+            ? targetLesson.sort + 1
             : targetLesson.sort - 1
-        
+
         // 更新排序值
         await Lesson.findByIdAndUpdate(id, { sort: newSort })
-        
+
         // 重新排序所有课程，确保排序值连续
         const lessons = await Lesson.find().sort('sort')
         for (let i = 0; i < lessons.length; i++) {
             await Lesson.findByIdAndUpdate(lessons[i]._id, { sort: i + 1 })
         }
-        
+
         res.json({
             code: 200,
             message: '排序更新成功'
@@ -300,6 +300,24 @@ exports.updateSort = async (req, res) => {
         res.status(500).json({
             code: 500,
             message: '更新排序失败'
+        })
+    }
+}
+
+// 关联学员
+exports.enrollStudents = async (req, res) => {
+    try {
+        const { studentIds } = req.params
+        const { lessonId } = req.query
+        console.log(studentIds, lessonId)
+        res.json({
+            code: 200,
+            message: '关联学员成功'
+        })
+    } catch (error) {
+        res.status(500).json({
+            code: 500,
+            message: "关联学员失败"
         })
     }
 }

@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const studentSchema = new mongoose.Schema({
+    // 关联的学生Id
+    lessonId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: false
+    },
     // 学员姓名
     name: {
         type: String,

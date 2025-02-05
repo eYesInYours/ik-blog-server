@@ -12,4 +12,8 @@ router.put('/:id', auth, authorOnly, lessonController.updateLesson); // 更新�
 router.delete('/:id', auth, authorOnly, lessonController.deleteLesson); // 删除课程
 router.patch('/:id/status', auth, authorOnly, lessonController.updateLessonStatus); // 更新课程状态
 router.post('/sort', auth, authorOnly, lessonController.updateSort); // 更新课程排序
+
+// 关联学员
+router.post('enroll/:lessonId', auth, authorOnly, lessonController.enrollStudents)
+
 module.exports = router;

@@ -9,7 +9,7 @@ const moment = require('moment');
 // 获取学员列表
 exports.getStudents = async (req, res) => {
     try {
-        const { page = 1, limit = 10, keyword, status, deleted } = req.query;
+        const { page = 1, limit = 10, keyword, status, deleted, lessonId } = req.query;
 
         // 构建查询条件
         const query = {};
@@ -91,47 +91,6 @@ exports.createStudent = async (req, res) => {
         res.status(SERVER_ERROR.INTERNAL_ERROR).json({
             code: SERVER_ERROR.INTERNAL_ERROR,
             message: error.message || '创建学员失败'
-        });
-    }
-};
-
-// 关联课程
-exports.enrollLesson = async (req, res) => {
-    try {
-        const { studentId, lessonId, totalSessions} = req.body;
-
-        const student = await Student.findById(studentId);
-        if (!student) {
-            throw new Error('学员不存在');
-        }
-
-        // 检查是否已经关联了该课程
-        const existingLesson = student.lessons.find(
-            l => l.lessonId.toString() === lessonId && l.status === 'active'
-        );
-        if (existingLesson) {
-            throw new Error('该学员已关联此课程');
-        }
-
-        // 添加新课程
-        student.lessons.push({
-            lessonId,
-            totalSessions,
-            remainingSessions: totalSessions,
-        });
-
-        await student.save();
-
-        res.json({
-            code: SUCCESS.OK,
-            message: '课程关联成功',
-            data: student.lessons[student.lessons.length - 1]
-        });
-    } catch (error) {
-        console.error(chalk.red('关联课程错误:'), error);
-        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
-            code: SERVER_ERROR.INTERNAL_ERROR,
-            message: error.message || '关联课程失败'
         });
     }
 };
