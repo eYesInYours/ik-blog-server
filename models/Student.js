@@ -2,10 +2,30 @@ const mongoose = require('mongoose');
 
 const studentSchema = new mongoose.Schema({
     // 关联的学生Id
-    lessonId: {
-        type: mongoose.Schema.Types.ObjectId,
-        required: false
-    },
+    lessons: [{
+        lessonId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Lesson',
+            required: true
+        },
+        totalSessions: {
+            type: Number,
+            required: true
+        },
+        remainingSessions: {
+            type: Number,
+            required: true
+        },
+        startDate: {
+            type: Date,
+            default: Date.now
+        },
+        status: {
+            type: String,
+            enum: ['active', 'completed', 'expired'],
+            default: 'active'
+        }
+    }],
     // 学员姓名
     name: {
         type: String,

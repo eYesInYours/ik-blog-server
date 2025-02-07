@@ -307,17 +307,109 @@ exports.updateSort = async (req, res) => {
 // 关联学员
 exports.enrollStudents = async (req, res) => {
     try {
-        const { studentIds } = req.params
-        const { lessonId } = req.query
-        console.log(studentIds, lessonId)
+        const { lessonId } = req.params;
+        const { studentIds } = req.body;
+
+        // 验证课程是否存在
+        const lesson = await Lesson.findById(lessonId);
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
+            });
+        }
+
+        // 验证学员是否存在
+        const students = await Student.find({ 
+            _id: { $in: studentIds },
+            deleted: false 
+        });
+        if (students.length !== studentIds.length) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '部分学员不存在或已删除'
+            });
+        }
+
+        // 检查学员是否已经关联了该课程
+        const existingEnrollments = await Student.find({
+            _id: { $in: studentIds },
+            'lessons.lessonId': lessonId
+        });
+        if (existingEnrollments.length) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '部分学员已关联该课程'
+            });
+        }
+
+        // 为每个学员添加课程关联信息
+        await Student.updateMany(
+            { _id: { $in: studentIds } },
+            {
+                $push: {
+                    lessons: {
+                        lessonId,
+                        totalSessions: lesson.totalSessions,
+                        remainingSessions: lesson.totalSessions,
+                        startDate: new Date(),
+                        status: 'active'
+                    }
+                }
+            }
+        );
+
         res.json({
             code: 200,
             message: '关联学员成功'
-        })
+        });
     } catch (error) {
+        console.error('关联学员失败:', error);
         res.status(500).json({
             code: 500,
             message: "关联学员失败"
-        })
+        });
     }
-}
+};
+
+// 移除学员
+exports.removeStudent = async (req, res) => {
+    try {
+        const { lessonId, studentId } = req.params;
+
+        // 验证课程是否存在
+        const lesson = await Lesson.findById(lessonId);
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
+            });
+        }
+
+        // 验证学员是否存在
+        const student = await Student.findById(studentId);
+        if (!student) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '学员不存在'
+            });
+        }
+
+        // 移除课程关联
+        await Student.updateOne(
+            { _id: studentId },
+            { $pull: { lessons: { lessonId } } }
+        );
+
+        res.json({
+            code: SUCCESS.OK,
+            message: '移除学员成功'
+        });
+    } catch (error) {
+        console.error('移除学员失败:', error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '移除学员失败'
+        });
+    }
+};

@@ -5,15 +5,16 @@ const mongoose = require('mongoose');
 const Lesson = require('../models/Lesson');
 const Record = require('../models/Record');
 const moment = require('moment');
+const lessonController = require('./lessonController');
 
 // 获取学员列表
 exports.getStudents = async (req, res) => {
     try {
-        const { page = 1, limit = 10, keyword, status, deleted, lessonId } = req.query;
+        const { page = 1, limit = 10, keyword, status, deleted, lessonId, excludeLessonId } = req.query;
 
         // 构建查询条件
         const query = {};
-        
+
         // 处理删除状态查询
         if (deleted !== undefined) {
             query.deleted = deleted === 'true';
@@ -26,15 +27,39 @@ exports.getStudents = async (req, res) => {
                 { email: new RegExp(keyword, 'i') }
             ];
         }
-        if (status) {
+        if (status)
             query.status = status;
+
+        // 如果指定了课程ID，查询该课程下的所有学员
+        if (lessonId && mongoose.Types.ObjectId.isValid(lessonId)) {
+            query['lessons.lessonId'] = lessonId;
+            query['lessons.status'] = 'active';
+        }
+
+        // 如果指定了要排除的课程ID，排除已关联该课程的学员
+        if (excludeLessonId && mongoose.Types.ObjectId.isValid(excludeLessonId)) {
+            query['lessons.lessonId'] = {
+                $ne: excludeLessonId
+            };
         }
 
         const total = await Student.countDocuments(query);
         const students = await Student.find(query)
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
-            .limit(Number(limit));
+            .limit(Number(limit))
+            .lean();
+
+        // 如果是查询课程关联的学员，添加课程相关的统计信息
+        if (lessonId) {
+            students.forEach(student => {
+                const lessonInfo = student.lessons.find(l => l.lessonId.toString() === lessonId);
+                if (lessonInfo) {
+                    student.remainingSessions = lessonInfo.remainingSessions;
+                    student.totalSessions = lessonInfo.totalSessions;
+                }
+            });
+        }
 
         res.json({
             code: SUCCESS.OK,
@@ -59,7 +84,7 @@ exports.getStudents = async (req, res) => {
 // 创建学员
 exports.createStudent = async (req, res) => {
     try {
-        const { name, phone, email, remark } = req.body;
+        const { name, phone, email, remark, lessonId } = req.body;
 
         // 验证手机号是否已存在
         const existingStudent = await Student.findOne({ phone, deleted: false });
@@ -80,7 +105,28 @@ exports.createStudent = async (req, res) => {
             status: 'active'
         });
 
-        // 直接返回创建的学员数据，不需要populate
+        // 如果提供了课程ID，关联学员和课程
+        if (lessonId) {
+            // 检查学员是否已经关联了该课程
+            const existingLesson = student.lessons?.find(l => l.lessonId.toString() === lessonId);
+            if (!existingLesson) {
+                // 构造模拟请求对象
+                const mockReq = {
+                    params: { lessonId },
+                    body: { studentIds: [student._id] }
+                }
+                // 构造模拟响应对象
+                const mockRes = {
+                    status: () => mockRes,
+                    json: () => { } // 不需要处理响应
+                }
+
+                // 调用课程关联方法
+                await lessonController.enrollStudents(mockReq, mockRes)
+            }
+        }
+
+        // 返回创建的学员数据
         res.status(SUCCESS.OK).json({
             code: SUCCESS.OK,
             data: student,
@@ -199,7 +245,7 @@ exports.recharge = async (req, res) => {
 exports.updateStudent = async (req, res) => {
     try {
         const { id } = req.params
-        const { name, phone, email, remark } = req.body
+        const { name, phone, email, remark, lessonId } = req.body
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(CLIENT_ERROR.BAD_REQUEST).json({
@@ -230,7 +276,7 @@ exports.updateStudent = async (req, res) => {
                 email,
                 remark
             },
-            { new: true } // 返回更新后的文档
+            { new: true }
         )
 
         if (!student) {
@@ -238,6 +284,27 @@ exports.updateStudent = async (req, res) => {
                 code: CLIENT_ERROR.NOT_FOUND,
                 message: '学员不存在'
             })
+        }
+
+        // 如果提供了课程ID，关联学员和课程
+        if (lessonId) {
+            // 检查学员是否已经关联了该课程
+            const existingLesson = student.lessons?.find(l => l.lessonId.toString() === lessonId);
+            if (!existingLesson) {
+                // 构造模拟请求对象
+                const mockReq = {
+                    params: { lessonId },
+                    body: { studentIds: [student._id] }
+                }
+                // 构造模拟响应对象
+                const mockRes = {
+                    status: () => mockRes,
+                    json: () => { } // 不需要处理响应
+                }
+
+                // 调用课程关联方法
+                await lessonController.enrollStudents(mockReq, mockRes)
+            }
         }
 
         res.json({
@@ -365,12 +432,12 @@ exports.getAnalysisData = async (req, res) => {
     try {
         const { studentId } = req.params;
         const { timeRange = 'month' } = req.query;
-        
+
         // 设置时间范围
         const now = moment();
         let startTime;
         let dateFormat;
-        
+
         switch (timeRange) {
             case 'week':
                 startTime = moment().startOf('week');
@@ -400,7 +467,7 @@ exports.getAnalysisData = async (req, res) => {
 
         // 计算充值总额
         const rechargeRecords = records.filter(r => r.type === 'recharge');
-        const totalRecharge = rechargeRecords.length > 0 
+        const totalRecharge = rechargeRecords.length > 0
             ? rechargeRecords.reduce((sum, r) => sum + (r.amount || 0), 0)
             : 0;
 
@@ -560,7 +627,7 @@ exports.updateRecord = async (req, res) => {
 
             // 计算新的扣费金额
             const newAmount = -(sessions * record.lessonId.price);
-            
+
             // 更新学员余额
             const amountDiff = newAmount - record.amount;
             await Student.findByIdAndUpdate(
@@ -616,157 +683,157 @@ exports.updateRecord = async (req, res) => {
 
 // 获取收入分析数据
 exports.getIncomeAnalysis = async (req, res) => {
-  try {
-    const { timeRange = 'month', date } = req.query;
-    
-    // 确定时间范围和分组格式
-    let startDate;
-    let endDate;
-    let groupFormat;
-    
-    const selectedDate = date ? new Date(date) : new Date();
-    
-    switch(timeRange) {
-      case 'week':
-        // 获取所选日期所在周的周一
-        startDate = new Date(selectedDate);
-        startDate.setDate(selectedDate.getDate() - selectedDate.getDay() + 1);
-        // 周日
-        endDate = new Date(startDate);
-        endDate.setDate(startDate.getDate() + 6);
-        groupFormat = "%Y-%m-%d";
-        break;
-        
-      case 'year':
-        startDate = new Date(selectedDate.getFullYear(), 0, 1);
-        endDate = new Date(selectedDate.getFullYear(), 11, 31);
-        groupFormat = "%Y-%m";
-        break;
-        
-      case 'month':
-      default:
-        startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-        endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-        groupFormat = "%Y-%m-%d";
-        break;
-    }
+    try {
+        const { timeRange = 'month', date } = req.query;
 
-    // 聚合查询收入和课时数据
-    const records = await Record.aggregate([
-      {
-        $match: {
-          recordTime: { $gte: startDate, $lte: endDate }
+        // 确定时间范围和分组格式
+        let startDate;
+        let endDate;
+        let groupFormat;
+
+        const selectedDate = date ? new Date(date) : new Date();
+
+        switch (timeRange) {
+            case 'week':
+                // 获取所选日期所在周的周一
+                startDate = new Date(selectedDate);
+                startDate.setDate(selectedDate.getDate() - selectedDate.getDay() + 1);
+                // 周日
+                endDate = new Date(startDate);
+                endDate.setDate(startDate.getDate() + 6);
+                groupFormat = "%Y-%m-%d";
+                break;
+
+            case 'year':
+                startDate = new Date(selectedDate.getFullYear(), 0, 1);
+                endDate = new Date(selectedDate.getFullYear(), 11, 31);
+                groupFormat = "%Y-%m";
+                break;
+
+            case 'month':
+            default:
+                startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+                endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+                groupFormat = "%Y-%m-%d";
+                break;
         }
-      },
-      {
-        $group: {
-          _id: {
-            date: { $dateToString: { format: groupFormat, date: "$recordTime" } },
-            type: "$type"
-          },
-          totalAmount: { $sum: "$amount" },
-          // 只统计签到类型的课时数，并取绝对值（因为签到记录的 sessions 是负数）
-          totalSessions: {
-            $sum: {
-              $cond: [
-                { $eq: ["$type", "attendance"] },
-                { $abs: "$sessions" },
-                0
-              ]
+
+        // 聚合查询收入和课时数据
+        const records = await Record.aggregate([
+            {
+                $match: {
+                    recordTime: { $gte: startDate, $lte: endDate }
+                }
+            },
+            {
+                $group: {
+                    _id: {
+                        date: { $dateToString: { format: groupFormat, date: "$recordTime" } },
+                        type: "$type"
+                    },
+                    totalAmount: { $sum: "$amount" },
+                    // 只统计签到类型的课时数，并取绝对值（因为签到记录的 sessions 是负数）
+                    totalSessions: {
+                        $sum: {
+                            $cond: [
+                                { $eq: ["$type", "attendance"] },
+                                { $abs: "$sessions" },
+                                0
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                $group: {
+                    _id: "$_id.date",
+                    income: {
+                        $push: {
+                            type: "$_id.type",
+                            amount: "$totalAmount",
+                            sessions: "$totalSessions"
+                        }
+                    }
+                }
+            },
+            {
+                $sort: { "_id": 1 }
             }
-          }
-        }
-      },
-      {
-        $group: {
-          _id: "$_id.date",
-          income: {
-            $push: {
-              type: "$_id.type",
-              amount: "$totalAmount",
-              sessions: "$totalSessions"
+        ]);
+
+        // 生成完整的日期序列
+        const dates = [];
+        const rechargeAmounts = [];
+        const consumptionAmounts = [];
+        const sessionCounts = []; // 添加课时数组
+        let totalRecharge = 0;
+        let totalConsumption = 0;
+        let totalSessions = 0; // 添加总课时统计
+
+        // 根据时间范围生成日期序列
+        let currentDate = new Date(startDate);
+        while (currentDate <= endDate) {
+            let dateStr;
+            if (timeRange === 'year') {
+                const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
+                dateStr = `${currentDate.getFullYear()}-${month}`;
+                currentDate.setMonth(currentDate.getMonth() + 1);
+            } else {
+                dateStr = currentDate.toISOString().slice(0, 10);
+                currentDate.setDate(currentDate.getDate() + 1);
             }
-          }
+            dates.push(dateStr);
+
+            // 查找对应日期的记录
+            const record = records.find(r => r._id === dateStr);
+            if (record) {
+                const recharge = record.income.find(i => i.type === 'recharge')?.amount || 0;
+                const consumption = Math.abs(record.income.find(i => i.type === 'attendance')?.amount || 0);
+                // 只获取签到记录的课时数
+                const sessions = record.income.find(i => i.type === 'attendance')?.sessions || 0;
+
+                rechargeAmounts.push(recharge);
+                consumptionAmounts.push(consumption);
+                sessionCounts.push(sessions);
+
+                totalRecharge += recharge;
+                totalConsumption += consumption;
+                totalSessions += sessions;
+            } else {
+                rechargeAmounts.push(0);
+                consumptionAmounts.push(0);
+                sessionCounts.push(0);
+            }
         }
-      },
-      {
-        $sort: { "_id": 1 }
-      }
-    ]);
 
-    // 生成完整的日期序列
-    const dates = [];
-    const rechargeAmounts = [];
-    const consumptionAmounts = [];
-    const sessionCounts = []; // 添加课时数组
-    let totalRecharge = 0;
-    let totalConsumption = 0;
-    let totalSessions = 0; // 添加总课时统计
+        // 计算实际到手收入
+        const actualIncome = Math.min(totalRecharge, totalConsumption);
 
-    // 根据时间范围生成日期序列
-    let currentDate = new Date(startDate);
-    while (currentDate <= endDate) {
-      let dateStr;
-      if (timeRange === 'year') {
-        const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
-        dateStr = `${currentDate.getFullYear()}-${month}`;
-        currentDate.setMonth(currentDate.getMonth() + 1);
-      } else {
-        dateStr = currentDate.toISOString().slice(0, 10);
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
-      dates.push(dateStr);
-      
-      // 查找对应日期的记录
-      const record = records.find(r => r._id === dateStr);
-      if (record) {
-        const recharge = record.income.find(i => i.type === 'recharge')?.amount || 0;
-        const consumption = Math.abs(record.income.find(i => i.type === 'attendance')?.amount || 0);
-        // 只获取签到记录的课时数
-        const sessions = record.income.find(i => i.type === 'attendance')?.sessions || 0;
-        
-        rechargeAmounts.push(recharge);
-        consumptionAmounts.push(consumption);
-        sessionCounts.push(sessions);
-        
-        totalRecharge += recharge;
-        totalConsumption += consumption;
-        totalSessions += sessions;
-      } else {
-        rechargeAmounts.push(0);
-        consumptionAmounts.push(0);
-        sessionCounts.push(0);
-      }
+        res.json({
+            code: 200,
+            data: {
+                summary: {
+                    totalRecharge,         // 总充值金额（押金）
+                    totalConsumption,      // 总消费金额
+                    profit: actualIncome,  // 实际到手收入
+                    pendingIncome: totalConsumption - actualIncome, // 待收金额
+                    totalSessions         // 总课时数
+                },
+                trend: {
+                    dates,
+                    recharge: rechargeAmounts,    // 充值金额趋势
+                    consumption: consumptionAmounts, // 消费金额趋势
+                    sessions: sessionCounts       // 课时趋势
+                }
+            }
+        });
+    } catch (error) {
+        console.error('获取收入分析失败:', error);
+        res.status(500).json({
+            code: 500,
+            message: '获取收入分析失败'
+        });
     }
-
-    // 计算实际到手收入
-    const actualIncome = Math.min(totalRecharge, totalConsumption);
-
-    res.json({
-      code: 200,
-      data: {
-        summary: {
-          totalRecharge,         // 总充值金额（押金）
-          totalConsumption,      // 总消费金额
-          profit: actualIncome,  // 实际到手收入
-          pendingIncome: totalConsumption - actualIncome, // 待收金额
-          totalSessions         // 总课时数
-        },
-        trend: {
-          dates,
-          recharge: rechargeAmounts,    // 充值金额趋势
-          consumption: consumptionAmounts, // 消费金额趋势
-          sessions: sessionCounts       // 课时趋势
-        }
-      }
-    });
-  } catch (error) {
-    console.error('获取收入分析失败:', error);
-    res.status(500).json({
-      code: 500,
-      message: '获取收入分析失败'
-    });
-  }
 };
 
 // 更新学员状态

@@ -14,6 +14,8 @@ router.patch('/:id/status', auth, authorOnly, lessonController.updateLessonStatu
 router.post('/sort', auth, authorOnly, lessonController.updateSort); // 更新课程排序
 
 // 关联学员
-router.post('enroll/:lessonId', auth, authorOnly, lessonController.enrollStudents)
+router.post('/enroll/:lessonId', auth, authorOnly, lessonController.enrollStudents)
+router.post('/:lessonId/students', lessonController.enrollStudents);
+router.delete('/:lessonId/students/:studentId', lessonController.removeStudent);
 
 module.exports = router;
