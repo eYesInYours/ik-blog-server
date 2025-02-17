@@ -13,6 +13,11 @@ router.delete('/:id', auth, authorOnly, lessonController.deleteLesson); // 删�
 router.patch('/:id/status', auth, authorOnly, lessonController.updateLessonStatus); // 更新课程状态
 router.post('/sort', auth, authorOnly, lessonController.updateSort); // 更新课程排序
 
+// 课程签到
+router.post('/:lessonId/batchAttendance', auth, authorOnly, lessonController.batchAttendance);
+router.get('/:lessonId/attendance-records', auth, lessonController.getAttendanceRecords);
+router.put('/attendance-records/:batchId', auth, authorOnly, lessonController.updateAttendanceRecord);
+
 // 关联学员
 router.post('/enroll/:lessonId', auth, authorOnly, lessonController.enrollStudents)
 router.post('/:lessonId/students', lessonController.enrollStudents);

@@ -3,6 +3,7 @@ const Student = require('../models/Student');
 const { SUCCESS, CLIENT_ERROR, SERVER_ERROR } = require('../constants/httpStatus');
 const chalk = require('chalk');
 const mongoose = require('mongoose');
+const Record = require('../models/Record');
 
 // 获取课程列表
 exports.getLessons = async (req, res) => {
@@ -413,3 +414,254 @@ exports.removeStudent = async (req, res) => {
         });
     }
 };
+
+// 获取课程签到记录
+exports.getAttendanceRecords = async (req, res) => {
+    try {
+        const { lessonId } = req.params;
+        const { page = 1, limit = 10 } = req.query;
+
+        // 查询相关的课程信息
+        const lesson = await Lesson.findById(lessonId)
+
+        // 使用聚合查询按批次分组
+        const records = await Record.aggregate([
+            {
+                $match: {
+                    lessonId: new mongoose.Types.ObjectId(lessonId),
+                    type: 'attendance',
+                    batchId: { $exists: true }
+                }
+            },
+            {
+                $group: {
+                    _id: '$batchId',
+                    recordTime: { $first: '$recordTime' },
+                    studentIds: { $first: '$studentIds' },
+                    remark: { $first: '$remark' },
+                    modifyHistory: { $first: '$modifyHistory' },
+                    students: {
+                        $push: {
+                            studentId: '$studentId',
+                            sessions: '$sessions',
+                            amount: '$amount'
+                        }
+                    },
+                    totalSessions: { $sum: { $abs: '$sessions' } },
+                    totalAmount: { $sum: { $abs: '$amount' } }
+                }
+            },
+            {
+                $sort: { recordTime: -1 }
+            },
+            {
+                $skip: (page - 1) * limit
+            },
+            {
+                $limit: Number(limit)
+            }
+        ]);
+
+        console.log(lesson, records)
+
+        // 获取总记录数
+        const total = await Record.distinct('batchId', {
+            lessonId: new mongoose.Types.ObjectId(lessonId),
+            type: 'attendance',
+            batchId: { $exists: true }
+        }).then(ids => ids.length);
+
+        // 获取所有相关的学员信息
+        const studentIds = records.reduce((ids, record) => [...ids, ...record.studentIds], []);
+        const students = await Student.find({ _id: { $in: studentIds } }, 'name phone');
+        const studentMap = new Map(students.map(s => [s._id.toString(), s]));
+
+        res.json({
+            code: SUCCESS.OK,
+            data: {
+                records: records.map(record => ({
+                    batchId: record._id,
+                    recordTime: record.recordTime,
+                    remark: record.remark || '',
+                    modifyHistory: record.modifyHistory || [],
+                    students: record.studentIds.map(id => {
+                        const student = studentMap.get(id.toString());
+                        const recordData = record.students.find(s => s.studentId.toString() === id.toString());
+                        return {
+                            _id: id,
+                            name: student?.name || '未知学员',
+                            phone: student?.phone || '',
+                            sessions: recordData?.sessions || 0,
+                            amount: recordData?.amount || 0
+                        };
+                    }),
+                    totalSessions: record.totalSessions,
+                    totalAmount: record.totalAmount
+                })),
+                pagination: {
+                    total,
+                    page: Number(page),
+                    limit: Number(limit)
+                }
+            }
+        });
+    } catch (error) {
+        console.error('获取课程签到记录失败:', error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '获取课程签到记录失败'
+        });
+    }
+};
+
+// 课程批量签到
+exports.batchAttendance = async (req, res) => {
+    try {
+        const { studentIds, sessions, attendanceTime, remark } = req.body;
+        const { lessonId } = req.params;
+        console.log(req.body, lessonId)
+        if (!studentIds || !Array.isArray(studentIds) || !studentIds.length) {
+            return res.status(CLIENT_ERROR.BAD_REQUEST).json({
+                code: CLIENT_ERROR.BAD_REQUEST,
+                message: '请选择要签到的学员'
+            });
+        }
+
+        // 获取课程信息
+        const lesson = await Lesson.findById(lessonId);
+        if (!lesson) {
+            return res.status(CLIENT_ERROR.NOT_FOUND).json({
+                code: CLIENT_ERROR.NOT_FOUND,
+                message: '课程不存在'
+            });
+        }
+
+        // 生成批次ID
+        const batchId = new mongoose.Types.ObjectId();
+
+        // 为每个学员创建签到记录
+        const records = await Promise.all(studentIds.map(async (studentId) => {
+            // 计算课时费
+            const amount = -(lesson.price * sessions);
+
+            // 创建签到记录
+            const record = new Record({
+                studentId,
+                lessonId,
+                type: 'attendance',
+                sessions: -sessions,
+                amount,
+                recordTime: attendanceTime || new Date(),
+                remark,
+                batchId,
+                studentIds
+            });
+
+            await record.save();
+
+            // 更新学员余额
+            await Student.findByIdAndUpdate(
+                studentId,
+                { $inc: { balance: amount } }
+            );
+
+            return record;
+        }));
+
+        res.json({
+            code: SUCCESS.OK,
+            data: {
+                batchId,
+                records
+            },
+            message: '批量签到成功'
+        });
+    } catch (error) {
+        console.error('批量签到失败:', error);
+        res.status(SERVER_ERROR.INTERNAL_ERROR).json({
+            code: SERVER_ERROR.INTERNAL_ERROR,
+            message: '批量签到失败'
+        });
+    }
+};
+
+// 更新签到记录
+exports.updateAttendanceRecord = async (req, res) => {
+    try {
+        const { batchId } = req.params;
+        const { sessions, remark } = req.body;
+
+        // 查找原记录
+        const records = await Record.find({ batchId });
+        if (!records.length) {
+            return res.status(404).json({
+                code: 404,
+                message: '未找到签到记录'
+            });
+        }
+
+        try {
+            // 更新所有相关记录
+            const updatePromises = records.map(async record => {
+                // 计算金额变化
+                const oldAmount = record.amount;
+                const newAmount = -sessions * Math.abs(record.amount / record.sessions);
+                const amountDiff = newAmount - oldAmount;
+
+                // 保存修改历史
+                const modifyHistory = {
+                    before: {
+                        sessions: record.sessions,
+                        amount: record.amount
+                    },
+                    after: {
+                        sessions: -sessions,
+                        amount: newAmount
+                    },
+                    modifiedAt: new Date()
+                };
+
+                // 更新记录
+                const updatedRecord = await Record.findByIdAndUpdate(
+                    record._id,
+                    {
+                        $set: {
+                            sessions: -sessions,
+                            amount: newAmount,
+                            remark: remark
+                        },
+                        $push: { modifyHistory }
+                    },
+                    { new: true }
+                );
+
+                // 更新学员余额
+                await Student.findByIdAndUpdate(
+                    record.studentId,
+                    { $inc: { balance: amountDiff } }
+                );
+
+                return updatedRecord;
+            });
+
+            const updatedRecords = await Promise.all(updatePromises);
+
+            res.json({
+                code: 200,
+                message: '修改成功',
+                data: {
+                    records: updatedRecords
+                }
+            });
+        } catch (error) {
+            throw error;
+        }
+    } catch (error) {
+        console.error('修改签到记录失败:', error);
+        res.status(500).json({
+            code: 500,
+            message: '修改签到记录失败'
+        });
+    }
+};
+

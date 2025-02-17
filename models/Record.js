@@ -20,6 +20,17 @@ const modifyHistorySchema = new mongoose.Schema({
 });
 
 const recordSchema = new mongoose.Schema({
+    // 批量签到ID（用于关联同一次课程签到的多条记录）
+    batchId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: false
+    },
+    // 批量签到的学员Id
+    studentIds: {
+        type: [mongoose.Schema.Types.ObjectId],
+        ref: 'Student',
+        required: false
+    },
     // 关联学员
     studentId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -30,7 +41,7 @@ const recordSchema = new mongoose.Schema({
     lessonId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Lesson',
-        required: function() {
+        required: function () {
             return this.type === 'attendance';
         }
     },
@@ -43,7 +54,7 @@ const recordSchema = new mongoose.Schema({
     // 课时变动数（签到必填，充值可选）
     sessions: {
         type: Number,
-        required: function() {
+        required: function () {
             return this.type === 'attendance';
         }
     },

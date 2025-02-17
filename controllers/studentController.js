@@ -7,10 +7,31 @@ const Record = require('../models/Record');
 const moment = require('moment');
 const lessonController = require('./lessonController');
 
+// 计算待收金额（所有负余额学员的欠费总和）
+async function calculatePendingIncome() {
+    const result = await Student.aggregate([
+        {
+            $match: { 
+                balance: { $lt: 0 } // 筛选出余额为负的学员
+            }
+        },
+        {
+            $group: {
+                _id: null,
+                totalDebt: { 
+                    $sum: { $abs: "$balance" } // 计算欠费总额
+                }
+            }
+        }
+    ]);
+
+    return result[0]?.totalDebt || 0; // 如果没有欠费学员，返回0
+}
+
 // 获取学员列表
 exports.getStudents = async (req, res) => {
     try {
-        const { page = 1, limit = 10, keyword, status, deleted, lessonId, excludeLessonId } = req.query;
+        const { page = 1, limit = 10, keyword, status, deleted, lessonId, balanceType, excludeLessonId  } = req.query;
 
         // 构建查询条件
         const query = {};
@@ -29,6 +50,18 @@ exports.getStudents = async (req, res) => {
         }
         if (status)
             query.status = status;
+
+        // 处理余额筛选
+        if (balanceType) {
+            switch (balanceType) {
+                case 'positive':
+                    query.balance = { $gte: 0 };
+                    break;
+                case 'negative':
+                    query.balance = { $lt: 0 };
+                    break;
+            }
+        }
 
         // 如果指定了课程ID，查询该课程下的所有学员
         if (lessonId && mongoose.Types.ObjectId.isValid(lessonId)) {
@@ -695,12 +728,9 @@ exports.getIncomeAnalysis = async (req, res) => {
 
         switch (timeRange) {
             case 'week':
-                // 获取所选日期所在周的周一
-                startDate = new Date(selectedDate);
-                startDate.setDate(selectedDate.getDate() - selectedDate.getDay() + 1);
-                // 周日
-                endDate = new Date(startDate);
-                endDate.setDate(startDate.getDate() + 6);
+                // 修改周数据的日期范围计算
+                startDate = moment(selectedDate).startOf('week').toDate();  // 使用 moment 获取周一
+                endDate = moment(selectedDate).endOf('week').toDate();     // 使用 moment 获取周日
                 groupFormat = "%Y-%m-%d";
                 break;
 
@@ -770,17 +800,16 @@ exports.getIncomeAnalysis = async (req, res) => {
         let totalConsumption = 0;
         let totalSessions = 0; // 添加总课时统计
 
-        // 根据时间范围生成日期序列
-        let currentDate = new Date(startDate);
-        while (currentDate <= endDate) {
+        // 修改日期序列生成逻辑
+        let currentDate = moment(startDate);
+        while (currentDate.isSameOrBefore(endDate)) {
             let dateStr;
             if (timeRange === 'year') {
-                const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
-                dateStr = `${currentDate.getFullYear()}-${month}`;
-                currentDate.setMonth(currentDate.getMonth() + 1);
+                dateStr = currentDate.format('YYYY-MM');
+                currentDate.add(1, 'month');
             } else {
-                dateStr = currentDate.toISOString().slice(0, 10);
-                currentDate.setDate(currentDate.getDate() + 1);
+                dateStr = currentDate.format('YYYY-MM-DD');
+                currentDate.add(1, 'day');
             }
             dates.push(dateStr);
 
@@ -816,7 +845,7 @@ exports.getIncomeAnalysis = async (req, res) => {
                     totalRecharge,         // 总充值金额（押金）
                     totalConsumption,      // 总消费金额
                     profit: actualIncome,  // 实际到手收入
-                    pendingIncome: totalConsumption - actualIncome, // 待收金额
+                    pendingIncome: await calculatePendingIncome(),
                     totalSessions         // 总课时数
                 },
                 trend: {

@@ -41,7 +41,7 @@ app.use(cors({
     origin: function(origin, callback) {
         const allowedOrigins = process.env.NODE_ENV === 'production'
             ? [
-                process.env.API_BASE
+                'http://47.115.94.236:3333'
               ]
             : ['http://localhost:3010', 'http://localhost:3333'];
         
