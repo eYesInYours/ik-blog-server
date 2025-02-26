@@ -7,6 +7,9 @@ const Record = require('../models/Record');
 const moment = require('moment');
 const lessonController = require('./lessonController');
 
+// 设置 moment 的区域为中文，这样一周的第一天就是周一
+moment.locale('zh-cn');
+
 // 计算待收金额（所有负余额学员的欠费总和）
 async function calculatePendingIncome() {
     const result = await Student.aggregate([
@@ -473,7 +476,7 @@ exports.getAnalysisData = async (req, res) => {
 
         switch (timeRange) {
             case 'week':
-                startTime = moment().startOf('week');
+                startTime = moment().startOf('isoWeek');  // 使用 isoWeek
                 dateFormat = 'MM-DD';
                 break;
             case 'month':
@@ -724,26 +727,25 @@ exports.getIncomeAnalysis = async (req, res) => {
         let endDate;
         let groupFormat;
 
-        const selectedDate = date ? new Date(date) : new Date();
+        const selectedDate = date ? moment(date) : moment();
 
         switch (timeRange) {
             case 'week':
-                // 修改周数据的日期范围计算
-                startDate = moment(selectedDate).startOf('week').toDate();  // 使用 moment 获取周一
-                endDate = moment(selectedDate).endOf('week').toDate();     // 使用 moment 获取周日
+                startDate = moment(selectedDate).startOf('isoWeek').toDate();
+                endDate = moment(selectedDate).endOf('isoWeek').toDate();     
                 groupFormat = "%Y-%m-%d";
                 break;
 
             case 'year':
-                startDate = new Date(selectedDate.getFullYear(), 0, 1);
-                endDate = new Date(selectedDate.getFullYear(), 11, 31);
+                startDate = moment(selectedDate).startOf('year').toDate();
+                endDate = moment(selectedDate).endOf('year').toDate();
                 groupFormat = "%Y-%m";
                 break;
 
             case 'month':
             default:
-                startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-                endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+                startDate = moment(selectedDate).startOf('month').toDate();
+                endDate = moment(selectedDate).endOf('month').toDate();
                 groupFormat = "%Y-%m-%d";
                 break;
         }
