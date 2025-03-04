@@ -15,7 +15,7 @@ async function calculatePendingIncome() {
     const result = await Student.aggregate([
         {
             $match: { 
-                balance: { $lt: 0 } // 筛选出余额为负的学员
+                balance: { $lte: 0 } // 筛选出余额小于等于0的学员
             }
         },
         {
@@ -58,10 +58,10 @@ exports.getStudents = async (req, res) => {
         if (balanceType) {
             switch (balanceType) {
                 case 'positive':
-                    query.balance = { $gte: 0 };
+                    query.balance = { $gt: 0 };
                     break;
                 case 'negative':
-                    query.balance = { $lt: 0 };
+                    query.balance = { $lte: 0 };
                     break;
             }
         }
